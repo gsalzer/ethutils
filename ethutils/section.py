@@ -1,6 +1,5 @@
-import sys,io,re # system
-import cbor2     # foreign
-import opcodes   # ethutils
+import io,re,cbor2
+from ethutils import opcodes
 
 PUSHPOP = b'(\x60.|\x61..|\x62...|\x63.{4}|\x64.{5}|\x65.{6}|\x66.{7}|\x67.{8}|\x68.{9}|\x69.{10}|\x6a.{11}|\x6b.{12}|\x6c.{13}|\x6d.{14}|\x6e.{15}|\x6f.{16}|\x70.{17}|\x71.{18}|\x72.{19}|\x73.{20}|\x74.{21}|\x75.{22}|\x76.{23}|\x77.{24}|\x78.{25}|\x79.{26}|\x7a.{27}|\\\x7b.{28}|\\\x7c.{29}|\\\x7d.{30}|\x7e.{31}|\x7f.{32})\x50'
 CONTRACT_OLD = b'\x60\x60\x60\x40(\x81\x90|\x90\x81)?\x52'
@@ -126,25 +125,3 @@ def decompose(code):
             sanitized_parts.append((CODE,last))
     assert len(code) == sum([len(pc) for pt,pc in sanitized_parts])
     return sanitized_parts
-
-def drop0x(hex):
-    return (None if hex is None else
-            hex[2:] if hex[0:2] == "0x" else
-            hex
-           )
-
-def main_stdin():
-    for line in sys.stdin:
-        row = line.rstrip('\n').split(';')
-        codeid = row[0]
-        if codeid == 'codeid':
-            print('codeid;sections')
-            continue
-        address = row[1]
-        code = bytes.fromhex(drop0x(row[2]))
-        sections = decompose(code)
-        sectionsHex = [ (t,b.hex()) for (t,b) in sections ]
-        print(f"{codeid};{sectionsHex}")
-
-if __name__ == '__main__':
-    sys.exit(main_stdin())
