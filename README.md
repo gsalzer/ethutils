@@ -2,7 +2,7 @@
 
 ## Installation on GNU/Linux and Unix
 
-Make sure that you have `python3` on your system.
+Before continuing, ensure that `python3` is installed.
 ```bash
 git clone https://github.com/gsalzer/ethutils.git # clone git repository
 cd ethutils
@@ -19,7 +19,7 @@ Before running the examples below:
 cd ethutils              # change to the top directory of the distribution
 source venv/bin/activate # activate the virtual environment
 ```
-Immediately after installation, you can skip the lines above, as you are already in the right directory and have activated the virtual environment.
+Directly after installation, you can skip the lines above, as you are already in the right directory and have activated the virtual environment.
 
 When you are done:
 ```
@@ -59,7 +59,7 @@ E.g., the line
 ```
 535998974;0x4a8eae10b7ee97a2c6a6212776f059a25e90e7f4;0x6080604052...0032
 ```
-in `test/bytecodes.csv` results in the output
+in `bytecodes.csv` yields the output
 ```
 535998974;[('code', '6080...56fe'), ('code', '6080...f3fe'), ('code', '6080...7373'), ('meta', 'a265...0032'), ('data', '4475...6564'), ('meta', 'a265...0032')]
 ```
@@ -67,8 +67,7 @@ in `test/bytecodes.csv` results in the output
 To section bytecode from within a Python script, use
 ```python
 import ethutils.section
-code = b'\x60\x80\x00'
-sections = ethutils.section.decompose(code)
+sections = ethutils.section.decompose(code) # code is a byte string
 ```
 
 ## skeleton.py: skeletizing bytecodes
@@ -76,7 +75,7 @@ sections = ethutils.section.decompose(code)
 The skeleton of a bytecode is obtained by replacing `PUSH` arguments as well as data and meta-data by zeros and then stripping trailing zeros.
 The computation of 
 
-```
+```bash
 cd test
 cat bytecodes.csv | python skeleton.py > bytecodes_skeleton.csv
 ```
@@ -91,7 +90,7 @@ E.g., the line
 ```
 535998974;0x4a8eae10b7ee97a2c6a6212776f059a25e90e7f4;0x6080604052...0032
 ```
-in `test/bytecodes.csv` results in the output
+in `bytecodes.csv` yields the output
 ```
 535998974;6000600052...0072
 ```
@@ -99,7 +98,38 @@ in `test/bytecodes.csv` results in the output
 To section bytecode from within a Python script, use
 ```python
 import ethutils.skeleton
-code = b'\x60\x80\x00'
-skel = ethutils.skeleton.skeletize(code)
+skel = ethutils.skeleton.skeletize(code) # code is a byte string
 ```
+
+## fourbytes.py: extracting the function signatures from bytecodes
+
+Contracts adhering to the ABI standard identify entry points by sequences of four bytes, which are partial hashes of the function name and the types of its parameters.
+This script extracts the function signatures from a given bytecode.
+
+```bash
+cd test
+cat bytecodes.csv | python fourbytes.py > bytecodes_fsigs.csv
+```
+
+`bytecodes_fsigs.csv` is a semicolon-separated text file with header.
+Each line contains the fields
+```
+codeid;signatures
+```
+
+E.g., the line
+```
+535998974;0x4a8eae10b7ee97a2c6a6212776f059a25e90e7f4;0x6080604052...0032
+```
+in `bytecodes.csv` yields the output
+```
+535998974;['6ba7c33b', 'c4552791']
+```
+
+To section bytecode from within a Python script, use
+```python
+import ethutils.fourbytes
+fsigs = ethutils.fourbytes.signatures(code) # code is a byte string
+```
+
 
