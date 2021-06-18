@@ -63,6 +63,7 @@ MLOAD20 = b'\x60\x20\x51' # PUSH1 0x20, MLOAD
 MLOAD80 = b'\x60\x80\x51' # PUSH1 0x80, MLOAD
 
 DUPMSTORE80 = b'\x60\x80\x81\x90\x52' # PUSH1 0x80, DUP2, SWAP1, MSTORE
+REVERT = b'\x60\x00\x80\xfd' # PUSH1 0x00, DUP1, REVERT
 
 SOMETHING = b'.{,128}?'
 ANYTHING = b'.*?'
@@ -104,8 +105,7 @@ SI6 = re.compile( ANYTHING + PSIGDUP + JMPNE, re.DOTALL)
 # Solidity >= ca. 0.5.6
 ST7 = ST1 
 # duplicate input signature on stack, push signature constant, and jump on equal
-SI7 = re.compile(b'(?:' + JMP + JMPDEST + b')?'+ b'(?:' + PSIGDUP + JMPGT + b')*' + PSIGDUP + JMPEQ, re.DOTALL)
-
+SI7 = re.compile(b'(?:' + JMP + JMPDEST + b')?'+ b'(?:' + PSIGDUP + JMPGT + b'|' + REVERT + JMPDEST + b')*' + PSIGDUP + JMPEQ, re.DOTALL)
 # Vyper?
 ST8 = re.compile(NOTHING, re.DOTALL)
 SI8 = re.compile(b'(?:^|' + ANYTHING + JMPDEST + b')' + PSIG + PINSIG + JMPNE, re.DOTALL)

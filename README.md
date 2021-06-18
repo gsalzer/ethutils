@@ -73,7 +73,6 @@ sections = ethutils.section.decompose(code) # code is a byte string
 ## skeleton.py: skeletizing bytecodes
 
 The skeleton of a bytecode is obtained by replacing `PUSH` arguments as well as data and meta-data by zeros and then stripping trailing zeros.
-The computation of 
 
 ```bash
 cd test
