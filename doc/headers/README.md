@@ -1,134 +1,43 @@
-# ethutils: Utilities for the Analysis of Ethereum Smart Contracts
+# Classifying function headers
 
-## Installation on GNU/Linux and Unix
+Function headers consist of a function name followed by the parameter types in parentheses.
+As a crude heuristics, the bash script `classify.sh` uses regex-based rules to group function headers into categories.
 
-Before continuing, ensure that `python3` is installed.
+Usage:
 ```bash
-git clone https://github.com/gsalzer/ethutils.git # clone git repository
-cd ethutils
-python3 -m venv venv                              # set up a virtual environment for Python
-source venv/bin/activate                          # ... and activate it
-pip install wheel
-pip install -r requirements.txt                   # install dependencies
+classify.sh <headers> <rules-1> <rules-2> ...
 ```
 
-## Initialization
+`<headers>` is a text file with one function header per line.
 
-Before running the examples below:
-```bash
-cd ethutils              # change to the top directory of the distribution
-source venv/bin/activate # activate the virtual environment
+`<rules-i>` is a text file with one rule per line. Each rule has the form
 ```
-Directly after installation, you can skip the lines above, as you are already in the right directory and have activated the virtual environment.
-
-When you are done:
+<inclusion pattern>   <category>   <exclusion pattern (optional)>
 ```
-deactivate               # deactivate the virtual environment
+A header is assigned to `<category>` if it matches `<inclusion pattern>` but not `<exclusion pattern>`.
+
+`classify.sh` works in rounds. Initially, all rules in `<rules-1>` are applied simultaneously to the headers in `<headers>`.
+If a rule classifies a header as belonging to `<category>`, the header is added to the file `categories/<category>`.
+One header may end up in several categories, if several rules match.
+At the end of the round, all headers newly classified in this round are removed from the set of headers.
+Then `<rules-2>` is applied to the remaining headers, and so on.
+After the last round, all classified headers are merged into a single file `categories.csv` that contains each header with its category, separated by a semicolon.
+
+## Required files
+
+```
+headers/classify.sh
+headers/rules1.txt
+headers/rules2.txt
 ```
 
-## Test data
-
-The file `test/bytecodes.csv` contains 100 contract codes from Ethereum's main chain as a semicolon-separated text file with header.
-Each line contains the fields
-```
-codeid;account;code
-```
-
-`codeid` is a unique identifier for the bytecode.
-`account` is one of the addresses on the chain where the code has been deployed.
-`code` is the bytecode of the contract.
-
-## section.py: sectioning bytecodes
-
-The bytecode of a contract may consist of several parts.
-The first one is usually executable EVM code, followed by further code sections for contracts created by the first part as well as by data and meta-data sections.
-`section.py` splits bytecode into a list of such sections, tagging each with one of the strings `code`, `data` or `meta`.
+## Try it out
 
 ```bash
-cd test
-cat bytecodes.csv | python section.py > bytecodes_section.csv
+cd ethutils/doc/headers  # go to the directory with the sample data
+bash wrapper_classify.sh # apply classify.sh to sample headers
 ```
 
-`bytecodes_section.csv` is a semicolon-separated text file with header.
-Each line contains the fields
-```
-codeid;sections
-```
-
-E.g., the line
-```
-535998974;0x4a8eae10b7ee97a2c6a6212776f059a25e90e7f4;0x6080604052...0032
-```
-in `bytecodes.csv` yields the output
-```
-535998974;[('code', '6080...56fe'), ('code', '6080...f3fe'), ('code', '6080...7373'), ('meta', 'a265...0032'), ('data', '4475...6564'), ('meta', 'a265...0032')]
-```
-
-To section bytecode from within a Python script, use
-```python
-import ethutils.section
-sections = ethutils.section.decompose(code) # code is a byte string
-```
-
-## skeleton.py: skeletizing bytecodes
-
-The skeleton of a bytecode is obtained by replacing `PUSH` arguments as well as data and meta-data by zeros and then stripping trailing zeros.
-
-```bash
-cd test
-cat bytecodes.csv | python skeleton.py > bytecodes_skeleton.csv
-```
-
-`bytecodes_skeleton.csv` is a semicolon-separated text file with header.
-Each line contains the fields
-```
-codeid;skeleton
-```
-
-E.g., the line
-```
-535998974;0x4a8eae10b7ee97a2c6a6212776f059a25e90e7f4;0x6080604052...0032
-```
-in `bytecodes.csv` yields the output
-```
-535998974;6000600052...0072
-```
-
-To section bytecode from within a Python script, use
-```python
-import ethutils.skeleton
-skel = ethutils.skeleton.skeletize(code) # code is a byte string
-```
-
-## fourbytes.py: extracting the function signatures from bytecodes
-
-Contracts adhering to the ABI standard identify entry points by sequences of four bytes, which are partial hashes of the function name and the types of its parameters.
-This script extracts the function signatures from a given bytecode.
-
-```bash
-cd test
-cat bytecodes.csv | python fourbytes.py > bytecodes_fsigs.csv
-```
-
-`bytecodes_fsigs.csv` is a semicolon-separated text file with header.
-Each line contains the fields
-```
-codeid;signatures
-```
-
-E.g., the line
-```
-535998974;0x4a8eae10b7ee97a2c6a6212776f059a25e90e7f4;0x6080604052...0032
-```
-in `bytecodes.csv` yields the output
-```
-535998974;['6ba7c33b', 'c4552791']
-```
-
-To section bytecode from within a Python script, use
-```python
-import ethutils.fourbytes
-fsigs = ethutils.fourbytes.signatures(code) # code is a byte string
-```
-
+The file `headers.csv` contains 71673 headers from the contracts on Ethereum's main chain.
+After running the scripts, `categories.csv` contains the classified headers followed by their category.
 

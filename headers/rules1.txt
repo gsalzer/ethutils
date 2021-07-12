@@ -1,12 +1,9 @@
 owner|minter|controller|operator|admin|staker|distributor|author|manager|advisor|agent|auditor|attorney|authority	roles
 crowdsale	crowdsale
 airdrop	airdrop
-#allow|approv	allowance
 transfer|withdraw|refund|deposit	transfer
-#upgrade	upgrade
 mint|increasesupply|^issue\(|create.*token	minting
 burn|decreasesupply	burning
-#^destroy	burning	destroy.*\((bool)?\)
 (freez|paus|froz|(^|[^b])lock|blocked|final|halt|start|stop|activ|kill|destroy|destruct|open|close).*\((address)?,?(bool)?\)	control
 ^(enable|disable)	control
 safe.*\(uint256,uint256\)	utils
