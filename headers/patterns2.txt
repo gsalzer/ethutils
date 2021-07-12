@@ -1,0 +1,6 @@
+\(\)	getter	^add
+^additional	getter
+of\(	getter	^(activate|against|lock(account|balance|bin))|proof\(
+^available	getter
+#(freez|paus|froz|(^|[^b])lock|blocked|unblock|final|halt|start|stop|activ|kill|destroy|destruct|open|close)	tokencontrol
+token|erc20	token

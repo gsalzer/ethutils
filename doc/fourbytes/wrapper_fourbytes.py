@@ -1,6 +1,6 @@
 import sys
-sys.path.append("..")
-from ethutils import section
+sys.path.append("../..")
+from ethutils import fourbytes
 
 def drop0x(hex):
     return (None if hex is None else
@@ -12,10 +12,10 @@ for line in sys.stdin:
     row = line.rstrip('\n').split(';')
     codeid = row[0]
     if codeid == 'codeid':
-        print('codeid;sections')
+        print('codeid;signatures')
         continue
     address = row[1]
     code = bytes.fromhex(drop0x(row[2]))
-    sections = section.decompose(code)
-    sectionsHex = [ (t,b.hex()) for (t,b) in sections ]
-    print(f"{codeid};{sectionsHex}")
+    sigs = fourbytes.signatures(code)
+    sigsHex = [ s.hex() for s in sigs ]
+    print(f"{codeid};{sigsHex}")

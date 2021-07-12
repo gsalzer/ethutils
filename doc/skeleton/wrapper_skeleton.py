@@ -1,6 +1,6 @@
 import sys
-sys.path.append("..")
-from ethutils import fourbytes
+sys.path.append("../..")
+from ethutils import skeleton
 
 def drop0x(hex):
     return (None if hex is None else
@@ -12,10 +12,10 @@ for line in sys.stdin:
     row = line.rstrip('\n').split(';')
     codeid = row[0]
     if codeid == 'codeid':
-        print('codeid;signatures')
+        print('codeid;skeleton')
         continue
     address = row[1]
     code = bytes.fromhex(drop0x(row[2]))
-    sigs = fourbytes.signatures(code)
-    sigsHex = [ s.hex() for s in sigs ]
-    print(f"{codeid};{sigsHex}")
+    skel = skeleton.skeletize(code)
+    print(f"{codeid};{skel.hex()}")
+
