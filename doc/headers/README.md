@@ -39,5 +39,5 @@ bash wrapper_classify.sh # apply classify.sh to sample headers
 ```
 
 The file `headers.csv` contains 71673 headers from the contracts on Ethereum's main chain.
-After running the scripts, `categories.csv` contains the classified headers followed by their category.
+After running the scripts, `categories.csv` contains the classified headers with their category.
 

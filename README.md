@@ -14,7 +14,7 @@ pip install -r requirements.txt                   # install dependencies
 
 ## Contents of the repository
 
+* [Documentation and code samples](doc)
 * [Python scripts for manipulating bytecodes](ethutils)
 * [Bash script for the rule-based classification of Solidity function headers](headers)
-* [Documentation and code samples](doc)
 
