@@ -8,8 +8,7 @@ git clone https://github.com/gsalzer/ethutils.git # clone git repository
 cd ethutils
 python3 -m venv venv                              # set up a virtual environment for Python
 source venv/bin/activate                          # ... and activate it
-pip install wheel
-pip install -r requirements.txt                   # install dependencies
+pip install cbor2                                 # install dependencies
 ```
 
 ## Contents of the repository
