@@ -9,7 +9,7 @@ This utility is used to preprocess bytecode when computing its skeleton and extr
 ## Required files
 
 ```
-ethutils/opcodes.py
+ethutils/metadata.py
 ethutils/section.py
 ```
 
