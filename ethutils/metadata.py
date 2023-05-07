@@ -1,4 +1,4 @@
-import io, re, cbor2, sys
+import io, cbor2
 
 def decode_cbor(code):
     fp = io.BytesIO(code)
