@@ -1,6 +1,7 @@
 import sys
 sys.path.append("../..")
-from ethutils import metadata
+
+import ethutils.metadata
 
 def drop0x(hex):
     return (None if hex is None else
@@ -22,7 +23,7 @@ for line in sys.stdin:
         continue
     address = row[1]
     code = bytes.fromhex(drop0x(row[2]))
-    code_wo_meta,metas = metadata.zeroMetadata(code)
+    code_wo_meta,metas = ethutils.metadata.zeroMetadata(code)
 
     # Extract the version of the solc compiler
     # Should be the same in all metadata dicts
