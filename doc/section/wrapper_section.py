@@ -1,6 +1,7 @@
 import sys
 sys.path.append("../..")
-from ethutils import section
+
+import ethutils.section
 
 def drop0x(hex):
     return (None if hex is None else
@@ -16,6 +17,6 @@ for line in sys.stdin:
         continue
     address = row[1]
     code = bytes.fromhex(drop0x(row[2]))
-    sections = section.decompose(code)
+    sections = ethutils.section.decompose(code)
     sectionsHex = [ (t,b.hex()) for (t,b) in sections ]
     print(f"{codeid};{sectionsHex}")
