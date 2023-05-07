@@ -1,5 +1,5 @@
-import io,re,cbor2
-from ethutils import opcodes
+import re
+import ethutils.metadata
 
 PUSHPOP = b'(\x60.|\x61..|\x62...|\x63.{4}|\x64.{5}|\x65.{6}|\x66.{7}|\x67.{8}|\x68.{9}|\x69.{10}|\x6a.{11}|\x6b.{12}|\x6c.{13}|\x6d.{14}|\x6e.{15}|\x6f.{16}|\x70.{17}|\x71.{18}|\x72.{19}|\x73.{20}|\x74.{21}|\x75.{22}|\x76.{23}|\x77.{24}|\x78.{25}|\x79.{26}|\x7a.{27}|\\\x7b.{28}|\\\x7c.{29}|\\\x7d.{30}|\x7e.{31}|\x7f.{32})\x50'
 CONTRACT_OLD = b'\x60\x60\x60\x40(\x81\x90|\x90\x81)?\x52'
@@ -27,57 +27,9 @@ RETURN = b'\xf3'
 INVALID = b'\xfe'
 SELFDESTRUCT = b'\xff'
 
-BZZR0 = b'bzzr0'
-BZZR1 = b'bzzr1'
-IPFS  = b'ipfs'
-SOURCE_RE = re.compile(BZZR0 + b'|' + BZZR1 + b'|' + IPFS)
-METADATA_OFFSET = 50
-
 CODE = 'code'
 META = 'meta'
 DATA = 'data'
-
-def matchMetadata(code,keyword):
-    try:
-        fp = io.BytesIO(code)
-        metadata = cbor2.load(fp)
-        rest = fp.read()
-        len_metadata = int.from_bytes(rest[:2],'big')
-        if len(rest) >= 2 and len(code) == len_metadata + len(rest) and keyword.decode('ascii') in metadata:
-            return code[:len_metadata+2]
-        else:
-            return b''
-    except:
-        return b''
-
-def searchMetadata(code):
-    parts = []
-    code_start = 0
-    i = 0
-    while True:
-        source_match = SOURCE_RE.search(code,i)
-        if source_match is None:
-            break
-        source_start = source_match.start()
-        metadata = b''
-        metadata_start = source_start
-        for j in range(source_start-2,max(source_start-METADATA_OFFSET,0)-1,-1):
-            metadata = matchMetadata(code[j:],source_match[0])
-            if metadata != b'':
-                metadata_start = j
-                break
-        metadata_end = metadata_start + len(metadata) 
-        if metadata_end > source_start:
-            if metadata_start > code_start:
-                parts.append((CODE,code[code_start:metadata_start]))
-            parts.append((META,code[metadata_start:metadata_end]))
-            code_start = metadata_end
-            i = metadata_end
-        else:
-            i = source_start + 1
-    if code_start < len(code):
-        parts.append((CODE,code[code_start:]))
-    return parts
 
 def splitCode(code):
     i = 0
@@ -90,38 +42,40 @@ def splitCode(code):
     return parts
 
 def decompose(code):
-    parts = []
-    preMeta = True
-    for p in searchMetadata(code):
-        pt,pc = p
-        if pt == META:
-            parts.append(p)
-            preMeta = False
-        else:
-            pc_parts = splitCode(pc)
-            if len(pc_parts) > 0:
-                if pc_parts[0] != b'':
-                    if preMeta:
-                        parts.append((CODE,pc_parts[0]))
-                    else:
-                        parts.append((DATA,pc_parts[0]))
-                parts.extend([(CODE,c) for c in pc_parts[1:]])
-    sanitized_parts = []
+    metadatas = ethutils.metadata.metadata(code)
+    code_start = 0
+    sections = []
+    CODE_DATA = CODE # the very first section is code
+    for meta_start,meta_length,_ in metadatas:
+        parts = splitCode(code[code_start:meta_start])
+        if len(parts) > 0:
+            if parts[0] != b'':
+                sections.append( (CODE_DATA, parts[0]) )
+            sections.extend( (CODE,p) for p in parts[1:] )
+        code_start = meta_start + meta_length
+        sections.append( (META,code[meta_start:code_start]) )
+        CODE_DATA = DATA
+    parts = splitCode(code[code_start:])
+    if len(parts) > 0:
+        if parts[0] != b'':
+            sections.append( (CODE_DATA, parts[0]) )
+        sections.extend( (CODE,p) for p in parts[1:] )
+
+    sanitized_sections = []
     last = b''
-    for p in parts:
-        pt,pc = p
-        if len(pc) == 0:
+    for t,c in sections:
+        if len(c) == 0:
             continue
-        if pt == CODE:
-            last += pc
+        if t == CODE:
+            last += c
             if last[-1:] not in (STOP,JUMP,RETURN,INVALID,SELFDESTRUCT):
                 continue
         if last != b'':
-            sanitized_parts.append((CODE,last))
+            sanitized_sections.append((CODE,last))
             last = b''
-        if pt != CODE:
-            sanitized_parts.append(p)
+        if t != CODE:
+            sanitized_sections.append((t,c))
     if last != b'':
-            sanitized_parts.append((CODE,last))
-    assert len(code) == sum([len(pc) for pt,pc in sanitized_parts])
-    return sanitized_parts
+        sanitized_sections.append((CODE,last))
+    assert len(code) == sum(len(c) for _,c in sanitized_sections)
+    return sanitized_sections
