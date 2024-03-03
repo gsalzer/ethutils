@@ -2,7 +2,7 @@
 
 The skeleton is obtained from the bytecode by normalizing parts that do not affect functionality:
 Solidity meta-data is removed and PUSH0-PUSH32 operations are replaced by PUSH0.
-Two bytecodes are functionally equivalent if their skeletons are identical.
+Two bytecodes are equivalent (up to varying PUSH operations) if their skeletons are identical.
 
 `skeleton.py` computes the skeleton of a given bytecode.
 
