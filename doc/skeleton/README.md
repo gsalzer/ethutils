@@ -1,8 +1,7 @@
 # Skeletizing bytecode
 
-The skeleton is obtained from the bytecode by removing parts that do not affect functionality:
-Solidity meta-data, constructor arguments and PUSH arguments are replaced by zeros, then trailing zeros are stripped.
-(The rationale of replacing bytes by zeros instead of removing them is to ensure that tools like disassemblers still work on the skeleton.)
+The skeleton is obtained from the bytecode by normalizing parts that do not affect functionality:
+Solidity meta-data is removed and PUSH0-PUSH32 operations are replaced by PUSH0.
 Two bytecodes are functionally equivalent if their skeletons are identical.
 
 `skeleton.py` computes the skeleton of a given bytecode.
@@ -10,8 +9,8 @@ Two bytecodes are functionally equivalent if their skeletons are identical.
 ## Required files
 
 ```
+ethutils/metadata.py
 ethutils/opcodes.py
-ethutils/section.py
 ethutils/skeleton.py
 ```
 
@@ -47,6 +46,7 @@ E.g., the line
 ```
 in `bytecodes.csv` yields the output
 ```
+535998974;5f5f52...5f5f
 535998974;6000600052...0072
 ```
 

@@ -26,6 +26,8 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# Some modifications by Gernot Salzer, salzer@logic.at
 
 """opcodes.py: Definitions of all EVM opcodes, and related utility functions."""
 
@@ -68,7 +70,7 @@ class OpCode:
 
     def is_push(self) -> bool:
         """Predicate: opcode is a push operation."""
-        return PUSH1.code <= self.code <= PUSH32.code
+        return PUSH0.code <= self.code <= PUSH32.code
 
     def is_swap(self) -> bool:
         """Predicate: opcode is a swap operation."""
@@ -95,11 +97,15 @@ class OpCode:
 
     def is_memory(self) -> bool:
         """Predicate: opcode operates on memory"""
-        return MLOAD.code <= self.code <= MSTORE8.code
+        return (MLOAD.code <= self.code <= MSTORE8.code) or self.code == MCOPY.code
 
     def is_storage(self) -> bool:
         """Predicate: opcode operates on storage ('the tape')"""
         return SLOAD.code <= self.code <= SSTORE.code
+
+    def is_tstorage(self) -> bool:
+        """Predicate: opcode operates on transient storage"""
+        return TLOAD.code <= self.code <= TSTORE.code
 
     def is_call(self) -> bool:
         """Predicate: opcode calls an external contract"""
@@ -107,12 +113,11 @@ class OpCode:
 
     def alters_flow(self) -> bool:
         """Predicate: opcode alters EVM control flow."""
-        return (self.code in (JUMP.code, JUMPI.code,)) or self.possibly_halts()
+        return (self.code in (JUMP.code, JUMPI.code,)) or self.halts()
     
     def is_exception(self) -> bool:
         """Predicate: opcode causes the EVM to throw an exception."""
-        return (self.code in (THROW.code, THROWI.code, REVERT.code)) \
-                or self.is_invalid()
+        return (self.code in (REVERT.code)) or self.is_invalid()
 
     def halts(self) -> bool:
         """Predicate: opcode causes the EVM to halt."""
@@ -120,18 +125,13 @@ class OpCode:
             STOP.code,
             RETURN.code,
             SELFDESTRUCT.code,
-            THROW.code,
             REVERT.code,
         )
         return (self.code in halt_codes) or self.is_invalid()
 
-    def possibly_halts(self) -> bool:
-        """Predicate: opcode MAY cause the EVM to halt. (halts + THROWI)"""
-        return self.halts() or self.code == THROWI.code
-
     def push_len(self) -> int:
         """Return the number of bytes the given PUSH instruction pushes."""
-        return self.code - PUSH1.code + 1 if self.is_push() else 0
+        return self.code - PUSH0.code if self.is_push() else 0
 
     def log_len(self) -> int:
         """Return the number of topics the given LOG instruction includes."""
@@ -170,7 +170,8 @@ SHL = OpCode("SHL", 0x1b, 2, 1) # for block.number >= CONSTANTINOPLE_FORK_BLKNUM
 SHR = OpCode("SHR", 0x1c, 2, 1) # for block.number >= CONSTANTINOPLE_FORK_BLKNUM
 SAR = OpCode("SAR", 0x1d, 2, 1) # for block.number >= CONSTANTINOPLE_FORK_BLKNUM
 
-SHA3 = OpCode("SHA3", 0x20, 2, 1)
+#SHA3 = OpCode("SHA3", 0x20, 2, 1)
+KECCAK256 = OpCode("KECCAK256", 0x20, 2, 1)
 
 # Environmental Information
 ADDRESS = OpCode("ADDRESS", 0x30, 0, 1)
@@ -195,11 +196,13 @@ BLOCKHASH = OpCode("BLOCKHASH", 0x40, 1, 1)
 COINBASE = OpCode("COINBASE", 0x41, 0, 1)
 TIMESTAMP = OpCode("TIMESTAMP", 0x42, 0, 1)
 NUMBER = OpCode("NUMBER", 0x43, 0, 1)
-DIFFICULTY = OpCode("DIFFICULTY", 0x44, 0, 1)
+#DIFFICULTY = OpCode("DIFFICULTY", 0x44, 0, 1)
+PREVRANDAO = OpCode("PREVRANDAO", 0x44, 0, 1)
 GASLIMIT = OpCode("GASLIMIT", 0x45, 0, 1)
 CHAINID = OpCode("CHAINID", 0x46, 0 ,1) # for block.number >= ISTANBUL_FORK_BLKNUM
 SELFBALANCE = OpCode("SELFBALANCE", 0x47, 0, 1) # for block.number >= ISTANBUL_FORK_BLKNUM
 BASEFEE = OpCode("BASEFEE", 0x48, 0, 1) # for block.number >= LONDON_FORK_BLKNUM
+BLOBBASEFEE = OpCode("BLOBBASEFEE", 0x4a, 0, 1) # for block.number >= CANCUN_FORK_BLKNUM
 
 # Stack, Memory, Storage, Flow
 POP = OpCode("POP", 0x50, 1, 0)
@@ -214,6 +217,10 @@ PC = OpCode("PC", 0x58, 0, 1)
 MSIZE = OpCode("MSIZE", 0x59, 0, 1)
 GAS = OpCode("GAS", 0x5a, 0, 1)
 JUMPDEST = OpCode("JUMPDEST", 0x5b, 0, 0)
+TLOAD = OpCode("TLOAD", 0x5c, 1, 1) # for block.number >= CANCUN_FORK_BLKNUM
+TSTORE = OpCode("TSTORE", 0x5d, 2, 0) # for block.number >= CANCUN_FORK_BLKNUM
+MCOPY = OpCode("MCOPY", 0x5e, 3, 0) # for block.number >= CANCUN_FORK_BLKNUM
+PUSH0 = OpCode("PUSH0", 0x5f, 0, 1) # for block.number >= SHANGHAI_FORK_BLKNUM
 
 PUSH1 = OpCode("PUSH1", 0x60, 0, 1)
 PUSH2 = OpCode("PUSH2", 0x61, 0, 1)
@@ -301,14 +308,6 @@ REVERT = OpCode("REVERT", 0xfd, 2, 0) # for block.number >= BYZANTIUM_FORK_BLKNU
 INVALID = OpCode("INVALID", 0xfe, 0, 0)
 SELFDESTRUCT = OpCode("SELFDESTRUCT", 0xff, 1, 0)
 
-# TAC Operations
-# These are not EVM opcodes, but they are used by the three-address code
-NOP = OpCode("NOP", -1, 0, 0)
-CONST = OpCode("CONST", -2, 0, 0)
-LOG = OpCode("LOG", -3, 0, 0)
-THROW = OpCode("THROW", -4, 0, 0)
-THROWI = OpCode("THROWI", -5, 0, 0)
-
 # Produce mappings from names and instruction codes to opcode objects
 OPCODES = {
     code.name: code
@@ -316,9 +315,6 @@ OPCODES = {
     if isinstance(code, OpCode)
 }
 """Dictionary mapping of opcode string names to EVM OpCode objects"""
-
-# Handle incorrect opcode name from go-ethereum disasm
-OPCODES["TXGASPRICE"] = OPCODES["GASPRICE"]
 
 BYTECODES = {code.code: code for code in OPCODES.values()}
 """Dictionary mapping of byte values to EVM OpCode objects"""
