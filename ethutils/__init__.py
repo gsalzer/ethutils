@@ -1,1 +1,1 @@
-__all__ = ["opcodes", "section", "skeleton"]
+__all__ = ["fourbytes","metadata","section","skeleton"]
