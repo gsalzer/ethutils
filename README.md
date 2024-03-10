@@ -1,3 +1,6 @@
+*If you are looking for the version used in our [EMSE 2024 paper](https://arxiv.org/abs/2303.10517), do `git checkout emse2024`.*
+
+
 # ethutils: Utilities for the Analysis of Ethereum Smart Contracts
 
 ## Installation on GNU/Linux and Unix
