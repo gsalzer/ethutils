@@ -1,114 +1,135 @@
 import re
 from ethutils import section
 
-DIV    = b'\x04'
-GT     = b'\x11'
-EQ     = b'\x14'
-ISZERO = b'\x15'
-AND    = b'\x16'
-SHR    = b'\x1c'
-DUP1   = b'\x80'
-DUP2   = b'\x81'
-SWAP1  = b'\x90'
+# regular expressions for single instructions
+ADD    = "\x01"
+DIV    = "\x04"
+EXP    = "\x0a"
+GT     = "\x11"
+EQ     = "\x14"
+ISZERO = "\x15"
+AND    = "\x16"
+SHR    = "\x1c"
+CALLDATALOAD="\x35"
+CALLDATACOPY="\x37"
+CODECOPY="\x39"
+MLOAD  = "\x51"
+MSTORE = "\x52"
+JUMP   = "\x56"
+JUMPI  = "\x57"
+JUMPDEST="\\\x5b"
+PUSH1  = "\x60"
+PUSH2  = "\x61"
+PUSH3  = "\x62"
+PUSH4  = "\x63"
+PUSH29 = "\\\x7c"
+PUSH0  = f"(?:\x5f|{PUSH1}\x00)"
+DUP1   = "\x80"
+DUP2   = "\x81"
+DUP3   = "\x82"
+DUP4   = "\x83"
+SWAP1  = "\x90"
+SWAP2  = "\x91"
+REVERT = "\xfd"
 
 # Push signature constant
-PSIG = b'(?:\x60(.)|\x61(..)|\x62(...)|\x63(....))' # PUSH1/PUSH2/PUSH3/PUSH4 signature
+PSIG = f"(?:{PUSH1}(.)|{PUSH2}(..)|{PUSH3}(...)|{PUSH4}(....))"
 
 # Duplicate top of stack and push signature constant
-PSIGDUP = b'(?:'+ PSIG + DUP2 + b'|' + DUP1 + PSIG + b')'
+PSIGDUP = f"(?:{PSIG}{DUP2}|{DUP1}{PSIG})"
+
+# push code address or length
+PADDR = f"(?:{PUSH1}.|{PUSH2}..|{PUSH3}...)"
 
 # Jumps
-JMP = b'(?:\x60.|\x61..|\x62...)\x56' # PUSH1/PUSH2/PUSH3 offset, JUMP
-JMPI = b'(?:\x60.|\x61..|\x62...)\x57' # PUSH1/PUSH2/PUSH3 offset, JUMPI
-JMPEQ = EQ+JMPI
-JMPNE = EQ+ISZERO+JMPI
-JMPXX = EQ+ISZERO+b'?'+JMPI
-JMPGT = GT+JMPI
-JMPDEST = b'\\\x5b'
+JMP   = f"{PADDR}{JUMP}"
+JMPI  = f"{PADDR}{JUMPI}"
+JMPEQ = f"{EQ}{JMPI}"
+JMPNE = f"{EQ}{ISZERO}{JMPI}"
+JMPXX = f"{EQ}{ISZERO}?{JMPI}"
+JMPGT = f"{GT}{JMPI}"
 
 # Push 256^14 (for selecting 4 bytes from input)
-# V1: PUSH1 0xe0, PUSH1 0x02, EXP
-P256P14v1=b'\x60\xe0\x60\x02\x0a'
-# V2: PUSH29 0x100000000000000000000000000000000000000000000000000000000
-P256P14v2=b'\\\x7c\x01\x00{28}'
+P256P14v1=f"{PUSH1}\xe0{PUSH1}\x02{EXP}"
+P256P14v2=f"{PUSH29}\x01\x00{{28}}"
 # V3: get constant from code area
-#     PUSH1 0x00, DUP1, MLOAD, PUSH1 0x20, PUSHx ..., DUP4, CODECOPY, DUP2, MLOAD, SWAP2, MSTORE
-P256P14v3=b'\x60\x00\x80\x51\x60\x20(?:\x60.|\x61..|\x62...)\x83\x39\x81\x51\x91\x52'
-#P256P14=b'(?:' + P256P14v1 + b'|' + P256P14v2 + b'|' + P256P14v3 + b'|' + b')' ????
-P256P14=b'(?:' + P256P14v1 + b'|' + P256P14v2 + b'|' + P256P14v3 + b')'
+P256P14v3=f"{PUSH0}{DUP1}{MLOAD}{PUSH1}\x20{PADDR}{DUP4}{CODECOPY}{DUP2}{MLOAD}{SWAP2}{MSTORE}"
+P256P14  =f"(?:{P256P14v1}|{P256P14v2}|{P256P14v3})"
 
 # Push input data
-PIN = b'\x60\x00\x35' # PUSH1 0x00, CALLDATALOAD
+PIN = f"{PUSH0}{CALLDATALOAD}"
+PINDUP = f"{PUSH0}{DUP1}?{CALLDATALOAD}"
 
 # Push 4 byte mask
-P4F = b'\x63\xff\xff\xff\xff' # PUSH4 0xffffffff
+PFFFFFFFF = f"{PUSH4}\xff\xff\xff\xff"
 
 # Take the signature from the input and put it on the stack
-PINSIG1 = b'(?:'+P256P14+PIN+b'|'+PIN+P256P14+SWAP1+b')' + DIV
-PINSIG2 = PIN + b'\x60\xe0' + SHR
-PINSIG = b'('+P4F+b')?' + b'(?:' + PINSIG1 + b'|' + PINSIG2 + b')' + b'('+P4F+AND+b')?' + b'(?(1)'+AND+b'|)'
+PINSIG1 = f"(?:{P256P14}{PIN}|{PINDUP}{P256P14}{SWAP1}){DIV}"
+PINSIG2 = f"{PINDUP}{PUSH1}\xe0{SHR}"
+PINSIG  = f"({PFFFFFFFF})?(?:{PINSIG1}|{PINSIG2})({PFFFFFFFF}{AND})?(?(1){AND}|)"
 
 # store input signature at memory address 00
-# PUSH1  0x00, PUSH1  0x00, MSTORE, PUSH1  0x04, PUSH1 0x00, PUSH1 0x1c, (optional: PUSH1 0x00, ADD), CALLDATACOPY 
-# or
-# PUSH1  0x00, CALLDATALOAD, PUSH1 0x1c, MSTORE
-INSIG00 = b'(?:' + b'\x60\x00\x60\x00\x52\x60\x04\x60\x00\x60\x1c(?:\x60\x00\x01)?\x37' + b'|' + PIN + b'\x60\x1c\x52' + b')'
+INSIG00 = f"(?:{PUSH0}{PUSH0}{MSTORE}{PUSH1}\x04{PUSH0}{PUSH1}\x1c(?:{PUSH0}{ADD})?{CALLDATACOPY}|{PIN}{PUSH1}\x1c{MSTORE})"
 
-MSTORE00 = b'\x60\x00\x52' # PUSH1 0x00, MSTORE
-MSTORE20 = b'\x60\x20\x52' # PUSH1 0x20, MSTORE
-MSTORE80 = b'\x60\x80\x52' # PUSH1 0x80, MSTORE
+MSTORE00 = f"{PUSH0}{MSTORE}"
+MSTORE20 = f"{PUSH1}\x20{MSTORE}"
+MSTORE80 = f"{PUSH1}\x80{MSTORE}"
 
-MLOAD00 = b'\x60\x00\x51' # PUSH1 0x00, MLOAD
-MLOAD20 = b'\x60\x20\x51' # PUSH1 0x20, MLOAD
-MLOAD80 = b'\x60\x80\x51' # PUSH1 0x80, MLOAD
+MLOAD00 = f"{PUSH0}{MLOAD}"
+MLOAD20 = f"{PUSH1}\x20{MLOAD}"
+MLOAD80 = f"{PUSH1}\x80{MLOAD}"
 
-DUPMSTORE80 = b'\x60\x80\x81\x90\x52' # PUSH1 0x80, DUP2, SWAP1, MSTORE
-REVERT = b'\x60\x00\x80\xfd' # PUSH1 0x00, DUP1, REVERT
+DUPMSTORE80 = f"{PUSH1}\x80{DUP2}{SWAP1}{MSTORE}"
+REVERT0 = f"{PUSH0}{DUP1}{REVERT}"
 
-SOMETHING = b'.{,128}?'
-ANYTHING = b'.*?'
-NOTHING  = b''
+SOMETHING = ".{,128}?"
+ANYTHING  = ".*?"
+NOTHING   = ""
+
+def regexp(s):
+    return re.compile(s.encode("latin1"), re.DOTALL)
 
 # Solidity
 # store input signature on stack
-ST1 = re.compile( SOMETHING + PINSIG, re.DOTALL)
+ST1 = regexp(f"{SOMETHING}{PINSIG}")
 # duplicate input signature on stack, push signature constant, and jump on equal
-SI1 = re.compile( PSIGDUP + JMPEQ, re.DOTALL)
+SI1 = regexp(f"{PSIGDUP}{JMPEQ}")
 
 # store input signature at memory address 20
-ST2 = re.compile( SOMETHING + PINSIG + MSTORE20, re.DOTALL)
+ST2 = regexp(f"{SOMETHING}{PINSIG}{MSTORE20}")
 # get input signature from memory address 20, push signature constant and jump on equal or unequal
-SI2 = re.compile( ANYTHING + b'(?:' + PSIG + MLOAD20 + b'|' + MLOAD20 + PSIG + b')' + JMPXX, re.DOTALL)
+SI2 = regexp(f"{ANYTHING}(?:{PSIG}{MLOAD20}|{MLOAD20}{PSIG}){JMPXX}")
 
 # signature on stack, immediately consumed, optionally stored in memory 0x80
-ST3 = re.compile( NOTHING, re.DOTALL)
-SI3 = re.compile( ANYTHING + PINSIG + b'(?:' + DUPMSTORE80 + b')?' + PSIG + JMPXX, re.DOTALL)
+ST3 = regexp(NOTHING)
+SI3 = regexp(f"{ANYTHING}{PINSIG}(?:{DUPMSTORE80})?{PSIG}{JMPXX}")
 
 # store input signature at memory address 00
-ST4 = re.compile( SOMETHING + INSIG00, re.DOTALL)
+ST4 = regexp(f"{SOMETHING}{INSIG00}")
 # get input signature from memory address 00, push signature constant and jump on equal or unequal
-SI4 = re.compile( ANYTHING + b'(?:' + PSIG + MLOAD00 + b'|' + MLOAD00 + PSIG + b')' + JMPXX, re.DOTALL)
+SI4 = regexp(f"{ANYTHING}(?:{PSIG}{MLOAD00}|{MLOAD00}{PSIG}){JMPXX}")
 
 # store input signature at memory address 80
-ST5 = re.compile( SOMETHING + PINSIG + MSTORE80, re.DOTALL)
+ST5 = regexp(f"{SOMETHING}{PINSIG}{MSTORE80}")
 # get input signature from memory address 20, push signature constant and jump on equal or unequal
-SI5 = re.compile( ANYTHING + b'(?:' + PSIG + MLOAD80 + b'|' + MLOAD80 + PSIG + b')' + JMPXX, re.DOTALL)
+SI5 = regexp(f"{ANYTHING}(?:{PSIG}{MLOAD80}|{MLOAD80}{PSIG}){JMPXX}")
 
 # store input signature on stack
-ST6 = ST1
+ST6 = regexp(f"{SOMETHING}{PINSIG}")
 # duplicate input signature on stack, push signature constant, and jump on unequal
-SI6 = re.compile( ANYTHING + PSIGDUP + JMPNE, re.DOTALL)
-### THIS IS NOT SAFE, MAY CATCH TOO MANY SIGNATURES, redo if you have time
-### Between DIV and comparison there may be instructions that are stack-neutral
+SI6 = regexp(f"{ANYTHING}{PSIGDUP}{JMPNE}")
+### THIS IS NOT SAFE, MAY CATCH TOO MANY SIGNATURES, redo one day
+### Between DIV and comparison, there may be instructions that are stack-neutral
 ### Further instances are most probably always preceded by 5b
 
 # Solidity >= ca. 0.5.6
-ST7 = ST1 
+ST7 = regexp(f"{SOMETHING}{PINSIG}")
 # duplicate input signature on stack, push signature constant, and jump on equal
-SI7 = re.compile(b'(?:' + JMP + JMPDEST + b')?'+ b'(?:' + PSIGDUP + JMPGT + b'|' + REVERT + JMPDEST + b')*' + PSIGDUP + JMPEQ, re.DOTALL)
+SI7 = regexp(f"(?:{JMP}{JUMPDEST})?(?:{PSIGDUP}{JMPGT}|{REVERT0}{JUMPDEST})*{PSIGDUP}{JMPEQ}")
+
 # Vyper?
-ST8 = re.compile(NOTHING, re.DOTALL)
-SI8 = re.compile(b'(?:^|' + ANYTHING + JMPDEST + b')' + PSIG + PINSIG + JMPNE, re.DOTALL)
+ST8 = regexp(NOTHING)
+SI8 = regexp(f"(?:^|{ANYTHING}{JUMPDEST}){PSIG}{PINSIG}{JMPNE}")
 
 def signatures(code):
     sections = section.decompose(code)
@@ -123,7 +144,7 @@ def signatures(code):
             c = c[result.end():]
             result = reSignature.match(c)
             if result:
-                signatures = signatures | {x.rjust(4,b'\x00') for x in result.groups() if x is not None}
+                signatures = signatures | {x.rjust(4,b"\x00") for x in result.groups() if x is not None}
         if signatures:
             break
     return sorted(signatures)
