@@ -24,6 +24,12 @@ cd ethutils
 ./setup-venv.sh                                   # set up a virtual environment for Python, install poetry and install the tools
 ```
 
+## Use this package in other projects
+
+```bash
+pip install https://github.com/gsalzer/ethutils.git@<COMMIT_HASH>#egg=ethutils                    # install the repository from GitHub
+```
+
 ## Contents of the repository
 
 * [Documentation and code samples](doc)
