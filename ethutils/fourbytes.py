@@ -4,11 +4,14 @@ from ethutils import section
 # regular expressions for single instructions
 ADD    = "\x01"
 DIV    = "\x04"
+MOD    = "\x06"
 EXP    = "\x0a"
 GT     = "\x11"
 EQ     = "\x14"
 ISZERO = "\x15"
 AND    = "\x16"
+XOR    = "\x18"
+SHL    = "\x1b"
 SHR    = "\x1c"
 CALLDATALOAD="\x35"
 CALLDATACOPY="\x37"
@@ -33,10 +36,10 @@ SWAP2  = "\x91"
 REVERT = "\xfd"
 
 # Push signature constant
-PSIG = f"(?:{PUSH1}(.)|{PUSH2}(..)|{PUSH3}(...)|{PUSH4}(....))"
+PVALUE = f"(?:{PUSH1}(.)|{PUSH2}(..)|{PUSH3}(...)|{PUSH4}(....))"
 
 # Duplicate top of stack and push signature constant
-PSIGDUP = f"(?:{PSIG}{DUP2}|{DUP1}{PSIG})"
+PSIGDUP = f"(?:{PVALUE}{DUP2}|{DUP1}{PVALUE})"
 
 # push code address or length
 PADDR = f"(?:{PUSH1}.|{PUSH2}..|{PUSH3}...)"
@@ -59,7 +62,6 @@ P256P14  =f"(?:{P256P14v1}|{P256P14v2}|{P256P14v3})"
 # Push input data
 PIN = f"{PUSH0}{CALLDATALOAD}"
 PINDUP = f"{PUSH0}{DUP1}?{CALLDATALOAD}"
-
 # Push 4 byte mask
 PFFFFFFFF = f"{PUSH4}\xff\xff\xff\xff"
 
@@ -80,7 +82,7 @@ MLOAD20 = f"{PUSH1}\x20{MLOAD}"
 MLOAD80 = f"{PUSH1}\x80{MLOAD}"
 
 DUPMSTORE80 = f"{PUSH1}\x80{DUP2}{SWAP1}{MSTORE}"
-REVERT0 = f"{PUSH0}{DUP1}{REVERT}"
+REVERT0 = f"{PUSH0}(?:{PUSH0}|{DUP1}){REVERT}"
 
 SOMETHING = ".{,128}?"
 ANYTHING  = ".*?"
@@ -98,21 +100,21 @@ SI1 = regexp(f"{PSIGDUP}{JMPEQ}")
 # store input signature at memory address 20
 ST2 = regexp(f"{SOMETHING}{PINSIG}{MSTORE20}")
 # get input signature from memory address 20, push signature constant and jump on equal or unequal
-SI2 = regexp(f"{ANYTHING}(?:{PSIG}{MLOAD20}|{MLOAD20}{PSIG}){JMPXX}")
+SI2 = regexp(f"{ANYTHING}(?:{PVALUE}{MLOAD20}|{MLOAD20}{PVALUE}){JMPXX}")
 
 # signature on stack, immediately consumed, optionally stored in memory 0x80
 ST3 = regexp(NOTHING)
-SI3 = regexp(f"{ANYTHING}{PINSIG}(?:{DUPMSTORE80})?{PSIG}{JMPXX}")
+SI3 = regexp(f"{ANYTHING}{PINSIG}(?:{DUPMSTORE80})?{PVALUE}{JMPXX}")
 
 # store input signature at memory address 00
 ST4 = regexp(f"{SOMETHING}{INSIG00}")
 # get input signature from memory address 00, push signature constant and jump on equal or unequal
-SI4 = regexp(f"{ANYTHING}(?:{PSIG}{MLOAD00}|{MLOAD00}{PSIG}){JMPXX}")
+SI4 = regexp(f"{ANYTHING}(?:{PVALUE}{MLOAD00}|{MLOAD00}{PVALUE}){JMPXX}")
 
 # store input signature at memory address 80
 ST5 = regexp(f"{SOMETHING}{PINSIG}{MSTORE80}")
 # get input signature from memory address 20, push signature constant and jump on equal or unequal
-SI5 = regexp(f"{ANYTHING}(?:{PSIG}{MLOAD80}|{MLOAD80}{PSIG}){JMPXX}")
+SI5 = regexp(f"{ANYTHING}(?:{PVALUE}{MLOAD80}|{MLOAD80}{PVALUE}){JMPXX}")
 
 # store input signature on stack
 ST6 = regexp(f"{SOMETHING}{PINSIG}")
@@ -129,7 +131,9 @@ SI7 = regexp(f"(?:{JMP}{JUMPDEST})?(?:{PSIGDUP}{JMPGT}|{REVERT0}{JUMPDEST})*{PSI
 
 # Vyper?
 ST8 = regexp(NOTHING)
-SI8 = regexp(f"(?:^|{ANYTHING}{JUMPDEST}){PSIG}{PINSIG}{JMPNE}")
+SI8 = regexp(f"(?:^|{ANYTHING}{JUMPDEST}){PVALUE}{PINSIG}{JMPNE}")
+
+
 
 def signatures(code):
     sections = section.decompose(code)
@@ -147,4 +151,31 @@ def signatures(code):
                 signatures = signatures | {x.rjust(4,b"\x00") for x in result.groups() if x is not None}
         if signatures:
             break
+    if not signatures:
+        signatures = vyper_signatures(code)
     return sorted(signatures)
+
+
+VYPER_JUMP_TABLE = regexp(
+    f"{PUSH0}{CALLDATALOAD}{PUSH1}\xe0{SHR}"
+    f"{PUSH1}\x02{PVALUE}{DUP3}{MOD}{PUSH1}\x01{SHL}{PVALUE}{ADD}"
+    f"{PUSH1}\x1e{CODECOPY}{PUSH0}{MLOAD}{JUMP}"
+    )
+VYPER_SIGNATURE = regexp(f"{JUMPDEST}{PVALUE}{DUP2}{XOR}{PVALUE}{JUMPI}")
+
+def vyper_signatures(code):
+    signatures = set()
+    m = VYPER_JUMP_TABLE.match(code)
+    if not m:
+        return signatures
+    table_size, table_pos = tuple(int.from_bytes(g, "big") for g in m.groups() if g is not None)
+    for _ in range(table_size):
+        pos = code[table_pos:table_pos+2]
+        while True:
+            m = VYPER_SIGNATURE.match(code, int.from_bytes(pos, "big"))
+            if not m:
+                break
+            sig, pos = tuple(g for g in m.groups() if g is not None)
+            signatures.add(sig.rjust(4,b"\x00"))
+        table_pos += 2
+    return signatures
