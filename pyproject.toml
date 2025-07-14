@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ethutils"
-version = "0.1.0"
+version = "0.1.1"
 description = "Utilities for the Analysis of Ethereum Smart Contracts"
 authors = ["Gernot Salzer (gsalzer)"]
 license = "GNU General Public License v3.0"
