@@ -16,6 +16,7 @@ SHR    = "\x1c"
 CALLDATALOAD="\x35"
 CALLDATACOPY="\x37"
 CODECOPY="\x39"
+POP    = "\x50"
 MLOAD  = "\x51"
 MSTORE = "\x52"
 JUMP   = "\x56"
@@ -39,7 +40,7 @@ REVERT = "\xfd"
 PVALUE = f"(?:{PUSH1}(.)|{PUSH2}(..)|{PUSH3}(...)|{PUSH4}(....))"
 
 # Duplicate top of stack and push signature constant
-PSIGDUP = f"(?:{PVALUE}{DUP2}|{DUP1}{PVALUE})"
+PSIGDUP = f"(?:{PVALUE}{DUP2}|(?:{DUP1}?|{SWAP1}{DUP2}){PVALUE})"
 
 # push code address or length
 PADDR = f"(?:{PUSH1}.|{PUSH2}..|{PUSH3}...)"
@@ -61,7 +62,7 @@ P256P14  =f"(?:{P256P14v1}|{P256P14v2}|{P256P14v3})"
 
 # Push input data
 PIN = f"{PUSH0}{CALLDATALOAD}"
-PINDUP = f"{PUSH0}{DUP1}?{CALLDATALOAD}"
+PINDUP = f"{PUSH0}{DUP1}?(?:{SWAP2}{DUP2})?{CALLDATALOAD}"
 # Push 4 byte mask
 PFFFFFFFF = f"{PUSH4}\xff\xff\xff\xff"
 
@@ -92,10 +93,11 @@ def regexp(s):
     return re.compile(s.encode("latin1"), re.DOTALL)
 
 # Solidity
-# store input signature on stack
-ST1 = regexp(f"{SOMETHING}{PINSIG}")
+
+# store input signature on stack [subsumed by ST7/SI7 which is tried first]
+#ST1 = regexp(f"{SOMETHING}{PINSIG}")
 # duplicate input signature on stack, push signature constant, and jump on equal
-SI1 = regexp(f"{PSIGDUP}{JMPEQ}")
+#SI1 = regexp(f"{PSIGDUP}{JMPEQ}")
 
 # store input signature at memory address 20
 ST2 = regexp(f"{SOMETHING}{PINSIG}{MSTORE20}")
@@ -127,7 +129,7 @@ SI6 = regexp(f"{ANYTHING}{PSIGDUP}{JMPNE}")
 # Solidity >= ca. 0.5.6
 ST7 = regexp(f"{SOMETHING}{PINSIG}")
 # duplicate input signature on stack, push signature constant, and jump on equal
-SI7 = regexp(f"(?:{JMP}{JUMPDEST})?(?:{PSIGDUP}{JMPGT}|{REVERT0}{JUMPDEST})*{PSIGDUP}{JMPEQ}")
+SI7 = regexp(f"(?:{JMP}{JUMPDEST})?(?:{PSIGDUP}{JMPGT}|{REVERT0}{JUMPDEST})*(?:{POP})?{PSIGDUP}{JMPEQ}")
 
 # Vyper?
 ST8 = regexp(NOTHING)
@@ -141,7 +143,7 @@ def signatures(code):
         return []
     code = sections[0][1]
     signatures = set()
-    for reStart,reSignature,id in [(ST7,SI7,7), (ST1,SI1,1), (ST2,SI2,2), (ST3,SI3,3), (ST4,SI4,4), (ST5,SI5,5), (ST6,SI6,6), (ST8,SI8,8)]:
+    for reStart,reSignature,id in [(ST7,SI7,7), (ST2,SI2,2), (ST3,SI3,3), (ST4,SI4,4), (ST5,SI5,5), (ST6,SI6,6), (ST8,SI8,8)]:
         c = code
         result = reStart.match(c)
         while result:
