@@ -12,10 +12,10 @@ for line in sys.stdin:
     row = line.rstrip('\n').split(';')
     codeid = row[0]
     if codeid == 'codeid':
-        print('codeid;signatures')
+        print('codeid;selectors')
         continue
     address = row[1]
     code = bytes.fromhex(drop0x(row[2]))
-    sigs = fourbytes.signatures(code)
+    sigs = fourbytes.selectors(code)
     sigsHex = [ s.hex() for s in sigs ]
     print(f"{codeid};{sigsHex}")

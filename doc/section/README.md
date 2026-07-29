@@ -4,7 +4,7 @@ The bytecode of a contract may consist of several parts.
 The first one usually is executable EVM code, followed by further code sections for contracts created by the first part, as well as by data and meta-data sections.
 
 `section.py` splits bytecode into a list of such sections, tagging each with one of the strings `code`, `data` or `meta`.
-This utility is used to preprocess bytecode when computing its skeleton and extracting the function signatures.
+This utility is used to preprocess bytecode when computing its skeleton and extracting the function selectors.
 
 ## Required files
 

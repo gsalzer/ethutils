@@ -1,8 +1,8 @@
-# Extracting the function signatures from bytecode
+# Extracting the function selectors from bytecode
 
-Contracts adhering to the ABI standard identify each entry point by a function signature, which consists of four bytes obtained by hashing the function name and the parameter types.
+Contracts adhering to the ABI standard identify each entry point by a function selector, which consists of the first four bytes of the hashed function signature (string with function name and parameter types).
 
-`fourbytes.py` extracts all function signatures from a given bytecode.
+`fourbytes.py` extracts all function selectors from a given bytecode.
 
 ## Required files
 
@@ -17,7 +17,7 @@ ethutils/fourbytes.py
 ```bash
 cd ethutils/doc/fourbytes      # go to the directory with the sample code
 source ../../venv/bin/activate # activate the virtual environment
-xzcat bytecodes.csv.xz | python wrapper_fourbytes.py > bytecodes_fsigs.csv
+xzcat bytecodes.csv.xz | python wrapper_fourbytes.py > bytecodes_selectors.csv
 deactivate                     # deactivate the virtual environment
 ```
 
@@ -32,10 +32,10 @@ codeid;account;code
 `code` is the bytecode of the contract.
 
 
-`bytecodes_fsigs.csv` is a semicolon-separated text file with header.
+`bytecodes_selectors.csv` is a semicolon-separated text file with header.
 Each line contains the fields
 ```
-codeid;signatures
+codeid;selectors
 ```
 
 E.g., the line
@@ -49,8 +49,8 @@ in `bytecodes.csv` yields the output
 
 ## Using the code in a Python program
 
-To extract signatures from within a Python script, use
+To extract selectors from within a Python script, use
 ```python
 import ethutils.fourbytes
-fsigs = ethutils.fourbytes.signatures(code) # code is a byte string
+selectors = ethutils.fourbytes.selectors(code) # code is a byte string
 ```
