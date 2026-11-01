@@ -1,358 +1,191 @@
-# BSD 3-Clause License
-#
-# Copyright (c) 2016, 2017, The University of Sydney. All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-# * Redistributions of source code must retain the above copyright notice, this
-#   list of conditions and the following disclaimer.
-#
-# * Redistributions in binary form must reproduce the above copyright notice,
-#   this list of conditions and the following disclaimer in the documentation
-#   and/or other materials provided with the distribution.
-#
-# * Neither the name of the copyright holder nor the names of its
-#   contributors may be used to endorse or promote products derived from
-#   this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#
-# Some modifications by Gernot Salzer, salzer@logic.at
+"""EVM opcode constants and instruction descriptions.
 
-"""opcodes.py: Definitions of all EVM opcodes, and related utility functions."""
+Each mnemonic is a one-byte bytes value. INFO maps these values to names,
+stack requirements and operand sizes. BY_VALUE accepts integer byte values;
+BY_NAME maps instruction names to their opcode bytes.
+"""
+from dataclasses import dataclass
+from types import MappingProxyType
 
 
-class OpCode:
-    """An EVM opcode."""
+@dataclass(frozen=True)
+class InstructionInfo:
+    """Instruction name, stack requirements and immediate operand width.
 
-    def __init__(self, name: str, code: int, pop: int, push: int):
-        """
-        Args:
-          name (str): Human-readable opcode.
-          code (int): The instruction byte itself.
-          pop (int): The number of stack elements this op pops.
-          push (int): The number of stack elements this op pushes.
-        """
-        self.name = name
-        self.code = code
-        self.pop = pop
-        self.push = push
-
-    def stack_delta(self) -> int:
-        """Return the net effect on the stack size of running this operation."""
-        return self.push - self.pop
-
-    def __str__(self) -> str:
-        return self.name
-
-    def __repr__(self) -> str:
-        return "<{0} object {1}, {2}>".format(
-            self.__class__.__name__,
-            hex(id(self)),
-            self.__str__()
-        )
-
-    def __eq__(self, other) -> bool:
-        return self.code == other.code
-
-    def __hash__(self) -> int:
-        return self.code.__hash__()
-
-    def is_push(self) -> bool:
-        """Predicate: opcode is a push operation."""
-        return PUSH0.code <= self.code <= PUSH32.code
-
-    def is_swap(self) -> bool:
-        """Predicate: opcode is a swap operation."""
-        return SWAP1.code <= self.code <= SWAP16.code
-
-    def is_dup(self) -> bool:
-        """Predicate: opcode is a dup operation."""
-        return DUP1.code <= self.code <= DUP16.code
-
-    def is_log(self) -> bool:
-        """Predicate: opcode is a log operation."""
-        return LOG0.code <= self.code <= LOG4.code
-
-    def is_missing(self) -> bool:
-        return self.code not in BYTECODES
-
-    def is_invalid(self) -> bool:
-        return (self.code == INVALID.code) or self.is_missing()
-
-    def is_arithmetic(self) -> bool:
-        """Predicate: opcode's result can be calculated from its inputs alone."""
-        return (ADD.code <= self.code <= SIGNEXTEND.code) or \
-               (LT.code <= self.code <= SAR.code)
-
-    def is_memory(self) -> bool:
-        """Predicate: opcode operates on memory"""
-        return (MLOAD.code <= self.code <= MSTORE8.code) or self.code == MCOPY.code
-
-    def is_storage(self) -> bool:
-        """Predicate: opcode operates on storage ('the tape')"""
-        return SLOAD.code <= self.code <= SSTORE.code
-
-    def is_tstorage(self) -> bool:
-        """Predicate: opcode operates on transient storage"""
-        return TLOAD.code <= self.code <= TSTORE.code
-
-    def is_call(self) -> bool:
-        """Predicate: opcode calls an external contract"""
-        return self in (CALL, CALLCODE, DELEGATECALL, STATICCALL,)
-
-    def alters_flow(self) -> bool:
-        """Predicate: opcode alters EVM control flow."""
-        return (self.code in (JUMP.code, JUMPI.code,)) or self.halts()
-    
-    def is_exception(self) -> bool:
-        """Predicate: opcode causes the EVM to throw an exception."""
-        return (self.code in (REVERT.code)) or self.is_invalid()
-
-    def halts(self) -> bool:
-        """Predicate: opcode causes the EVM to halt."""
-        halt_codes = (
-            STOP.code,
-            RETURN.code,
-            SELFDESTRUCT.code,
-            REVERT.code,
-        )
-        return (self.code in halt_codes) or self.is_invalid()
-
-    def push_len(self) -> int:
-        """Return the number of bytes the given PUSH instruction pushes."""
-        return self.code - PUSH0.code if self.is_push() else 0
-
-    def log_len(self) -> int:
-        """Return the number of topics the given LOG instruction includes."""
-        return self.code - LOG0.code if self.is_log() else 0
-
-
-# Construct all EVM opcodes
-
-# Arithmetic Ops and STOP
-STOP = OpCode("STOP", 0x00, 0, 0)
-ADD = OpCode("ADD", 0x01, 2, 1)
-MUL = OpCode("MUL", 0x02, 2, 1)
-SUB = OpCode("SUB", 0x03, 2, 1)
-DIV = OpCode("DIV", 0x04, 2, 1)
-SDIV = OpCode("SDIV", 0x05, 2, 1)
-MOD = OpCode("MOD", 0x06, 2, 1)
-SMOD = OpCode("SMOD", 0x07, 2, 1)
-ADDMOD = OpCode("ADDMOD", 0x08, 3, 1)
-MULMOD = OpCode("MULMOD", 0x09, 3, 1)
-EXP = OpCode("EXP", 0x0a, 2, 1)
-SIGNEXTEND = OpCode("SIGNEXTEND", 0x0b, 2, 1)
-
-# Comparison and Bitwise Logic
-LT = OpCode("LT", 0x10, 2, 1)
-GT = OpCode("GT", 0x11, 2, 1)
-SLT = OpCode("SLT", 0x12, 2, 1)
-SGT = OpCode("SGT", 0x13, 2, 1)
-EQ = OpCode("EQ", 0x14, 2, 1)
-ISZERO = OpCode("ISZERO", 0x15, 1, 1)
-AND = OpCode("AND", 0x16, 2, 1)
-OR = OpCode("OR", 0x17, 2, 1)
-XOR = OpCode("XOR", 0x18, 2, 1)
-NOT = OpCode("NOT", 0x19, 1, 1)
-BYTE = OpCode("BYTE", 0x1a, 2, 1)
-SHL = OpCode("SHL", 0x1b, 2, 1) # for block.number >= CONSTANTINOPLE_FORK_BLKNUM
-SHR = OpCode("SHR", 0x1c, 2, 1) # for block.number >= CONSTANTINOPLE_FORK_BLKNUM
-SAR = OpCode("SAR", 0x1d, 2, 1) # for block.number >= CONSTANTINOPLE_FORK_BLKNUM
-
-#SHA3 = OpCode("SHA3", 0x20, 2, 1)
-KECCAK256 = OpCode("KECCAK256", 0x20, 2, 1)
-
-# Environmental Information
-ADDRESS = OpCode("ADDRESS", 0x30, 0, 1)
-BALANCE = OpCode("BALANCE", 0x31, 1, 1)
-ORIGIN = OpCode("ORIGIN", 0x32, 0, 1)
-CALLER = OpCode("CALLER", 0x33, 0, 1)
-CALLVALUE = OpCode("CALLVALUE", 0x34, 0, 1)
-CALLDATALOAD = OpCode("CALLDATALOAD", 0x35, 1, 1)
-CALLDATASIZE = OpCode("CALLDATASIZE", 0x36, 0, 1)
-CALLDATACOPY = OpCode("CALLDATACOPY", 0x37, 3, 0)
-CODESIZE = OpCode("CODESIZE", 0x38, 0, 1)
-CODECOPY = OpCode("CODECOPY", 0x39, 3, 0)
-GASPRICE = OpCode("GASPRICE", 0x3a, 0, 1)
-EXTCODESIZE = OpCode("EXTCODESIZE", 0x3b, 1, 1)
-EXTCODECOPY = OpCode("EXTCODECOPY", 0x3c, 4, 0)
-RETURNDATASIZE = OpCode("RETURNDATASIZE", 0x3d, 0, 1) # for block.number >= BYZANTIUM_FORK_BLKNUM
-RETURNDATACOPY = OpCode("RETURNDATACOPY", 0x3e, 3, 0) # for block.number >= BYZANTIUM_FORK_BLKNUM
-EXTCODEHASH = OpCode("EXTCODEHASH", 0x3f, 1, 1) # for block.number >= CONSTANTINOPLE_FORK_BLKNUM
-
-# Block Information
-BLOCKHASH = OpCode("BLOCKHASH", 0x40, 1, 1)
-COINBASE = OpCode("COINBASE", 0x41, 0, 1)
-TIMESTAMP = OpCode("TIMESTAMP", 0x42, 0, 1)
-NUMBER = OpCode("NUMBER", 0x43, 0, 1)
-#DIFFICULTY = OpCode("DIFFICULTY", 0x44, 0, 1)
-PREVRANDAO = OpCode("PREVRANDAO", 0x44, 0, 1)
-GASLIMIT = OpCode("GASLIMIT", 0x45, 0, 1)
-CHAINID = OpCode("CHAINID", 0x46, 0 ,1) # for block.number >= ISTANBUL_FORK_BLKNUM
-SELFBALANCE = OpCode("SELFBALANCE", 0x47, 0, 1) # for block.number >= ISTANBUL_FORK_BLKNUM
-BASEFEE = OpCode("BASEFEE", 0x48, 0, 1) # for block.number >= LONDON_FORK_BLKNUM
-BLOBBASEFEE = OpCode("BLOBBASEFEE", 0x4a, 0, 1) # for block.number >= CANCUN_FORK_BLKNUM
-
-# Stack, Memory, Storage, Flow
-POP = OpCode("POP", 0x50, 1, 0)
-MLOAD = OpCode("MLOAD", 0x51, 1, 1)
-MSTORE = OpCode("MSTORE", 0x52, 2, 0)
-MSTORE8 = OpCode("MSTORE8", 0x53, 2, 0)
-SLOAD = OpCode("SLOAD", 0x54, 1, 1)
-SSTORE = OpCode("SSTORE", 0x55, 2, 0)
-JUMP = OpCode("JUMP", 0x56, 1, 0)
-JUMPI = OpCode("JUMPI", 0x57, 2, 0)
-PC = OpCode("PC", 0x58, 0, 1)
-MSIZE = OpCode("MSIZE", 0x59, 0, 1)
-GAS = OpCode("GAS", 0x5a, 0, 1)
-JUMPDEST = OpCode("JUMPDEST", 0x5b, 0, 0)
-TLOAD = OpCode("TLOAD", 0x5c, 1, 1) # for block.number >= CANCUN_FORK_BLKNUM
-TSTORE = OpCode("TSTORE", 0x5d, 2, 0) # for block.number >= CANCUN_FORK_BLKNUM
-MCOPY = OpCode("MCOPY", 0x5e, 3, 0) # for block.number >= CANCUN_FORK_BLKNUM
-PUSH0 = OpCode("PUSH0", 0x5f, 0, 1) # for block.number >= SHANGHAI_FORK_BLKNUM
-
-PUSH1 = OpCode("PUSH1", 0x60, 0, 1)
-PUSH2 = OpCode("PUSH2", 0x61, 0, 1)
-PUSH3 = OpCode("PUSH3", 0x62, 0, 1)
-PUSH4 = OpCode("PUSH4", 0x63, 0, 1)
-PUSH5 = OpCode("PUSH5", 0x64, 0, 1)
-PUSH6 = OpCode("PUSH6", 0x65, 0, 1)
-PUSH7 = OpCode("PUSH7", 0x66, 0, 1)
-PUSH8 = OpCode("PUSH8", 0x67, 0, 1)
-PUSH9 = OpCode("PUSH9", 0x68, 0, 1)
-PUSH10 = OpCode("PUSH10", 0x69, 0, 1)
-PUSH11 = OpCode("PUSH11", 0x6a, 0, 1)
-PUSH12 = OpCode("PUSH12", 0x6b, 0, 1)
-PUSH13 = OpCode("PUSH13", 0x6c, 0, 1)
-PUSH14 = OpCode("PUSH14", 0x6d, 0, 1)
-PUSH15 = OpCode("PUSH15", 0x6e, 0, 1)
-PUSH16 = OpCode("PUSH16", 0x6f, 0, 1)
-PUSH17 = OpCode("PUSH17", 0x70, 0, 1)
-PUSH18 = OpCode("PUSH18", 0x71, 0, 1)
-PUSH19 = OpCode("PUSH19", 0x72, 0, 1)
-PUSH20 = OpCode("PUSH20", 0x73, 0, 1)
-PUSH21 = OpCode("PUSH21", 0x74, 0, 1)
-PUSH22 = OpCode("PUSH22", 0x75, 0, 1)
-PUSH23 = OpCode("PUSH23", 0x76, 0, 1)
-PUSH24 = OpCode("PUSH24", 0x77, 0, 1)
-PUSH25 = OpCode("PUSH25", 0x78, 0, 1)
-PUSH26 = OpCode("PUSH26", 0x79, 0, 1)
-PUSH27 = OpCode("PUSH27", 0x7a, 0, 1)
-PUSH28 = OpCode("PUSH28", 0x7b, 0, 1)
-PUSH29 = OpCode("PUSH29", 0x7c, 0, 1)
-PUSH30 = OpCode("PUSH30", 0x7d, 0, 1)
-PUSH31 = OpCode("PUSH31", 0x7e, 0, 1)
-PUSH32 = OpCode("PUSH32", 0x7f, 0, 1)
-
-DUP1 = OpCode("DUP1", 0x80, 1, 2)
-DUP2 = OpCode("DUP2", 0x81, 2, 3)
-DUP3 = OpCode("DUP3", 0x82, 3, 4)
-DUP4 = OpCode("DUP4", 0x83, 4, 5)
-DUP5 = OpCode("DUP5", 0x84, 5, 6)
-DUP6 = OpCode("DUP6", 0x85, 6, 7)
-DUP7 = OpCode("DUP7", 0x86, 7, 8)
-DUP8 = OpCode("DUP8", 0x87, 8, 9)
-DUP9 = OpCode("DUP9", 0x88, 9, 10)
-DUP10 = OpCode("DUP10", 0x89, 10, 11)
-DUP11 = OpCode("DUP11", 0x8a, 11, 12)
-DUP12 = OpCode("DUP12", 0x8b, 12, 13)
-DUP13 = OpCode("DUP13", 0x8c, 13, 14)
-DUP14 = OpCode("DUP14", 0x8d, 14, 15)
-DUP15 = OpCode("DUP15", 0x8e, 15, 16)
-DUP16 = OpCode("DUP16", 0x8f, 16, 17)
-
-SWAP1 = OpCode("SWAP1", 0x90, 2, 2)
-SWAP2 = OpCode("SWAP2", 0x91, 3, 3)
-SWAP3 = OpCode("SWAP3", 0x92, 4, 4)
-SWAP4 = OpCode("SWAP4", 0x93, 5, 5)
-SWAP5 = OpCode("SWAP5", 0x94, 6, 6)
-SWAP6 = OpCode("SWAP6", 0x95, 7, 7)
-SWAP7 = OpCode("SWAP7", 0x96, 8, 8)
-SWAP8 = OpCode("SWAP8", 0x97, 9, 9)
-SWAP9 = OpCode("SWAP9", 0x98, 10, 10)
-SWAP10 = OpCode("SWAP10", 0x99, 11, 11)
-SWAP11 = OpCode("SWAP11", 0x9a, 12, 12)
-SWAP12 = OpCode("SWAP12", 0x9b, 13, 13)
-SWAP13 = OpCode("SWAP13", 0x9c, 14, 14)
-SWAP14 = OpCode("SWAP14", 0x9d, 15, 15)
-SWAP15 = OpCode("SWAP15", 0x9e, 16, 16)
-SWAP16 = OpCode("SWAP16", 0x9f, 17, 17)
-
-# Logging
-LOG0 = OpCode("LOG0", 0xa0, 2, 0)
-LOG1 = OpCode("LOG1", 0xa1, 3, 0)
-LOG2 = OpCode("LOG2", 0xa2, 4, 0)
-LOG3 = OpCode("LOG3", 0xa3, 5, 0)
-LOG4 = OpCode("LOG4", 0xa4, 6, 0)
-
-# System Operations
-CREATE = OpCode("CREATE", 0xf0, 3, 1)
-CALL = OpCode("CALL", 0xf1, 7, 1)
-CALLCODE = OpCode("CALLCODE", 0xf2, 7, 1)
-RETURN = OpCode("RETURN", 0xf3, 2, 0)
-DELEGATECALL = OpCode("DELEGATECALL", 0xf4, 6, 1)
-CREATE2 = OpCode("CREATE2", 0xf5, 4, 1) # for block.number >= CONSTANTINOPLE_FORK_BLKNUM
-STATICCALL = OpCode("STATICCALL", 0xfa, 6, 1) # for block.number >= BYZANTIUM_FORK_BLKNUM
-REVERT = OpCode("REVERT", 0xfd, 2, 0) # for block.number >= BYZANTIUM_FORK_BLKNUM
-INVALID = OpCode("INVALID", 0xfe, 0, 0)
-SELFDESTRUCT = OpCode("SELFDESTRUCT", 0xff, 1, 0)
-
-# Produce mappings from names and instruction codes to opcode objects
-OPCODES = {
-    code.name: code
-    for code in globals().values()
-    if isinstance(code, OpCode)
-}
-"""Dictionary mapping of opcode string names to EVM OpCode objects"""
-
-BYTECODES = {code.code: code for code in OPCODES.values()}
-"""Dictionary mapping of byte values to EVM OpCode objects"""
-
-
-def opcode_by_name(name: str) -> OpCode:
+    pops/pushes describe stack removal/addition; required is the minimum stack
+    depth, which also accounts for DUP and SWAP. immediate is a byte count.
     """
-    Mapping: Retrieves the named OpCode object (case-insensitive).
-
-    Throws:
-      LookupError: if there is no opcode defined with the given name.
-    """
-    name = name.upper()
-    if name not in OPCODES:
-        raise LookupError("No opcode named '{}'.".format(name))
-    return OPCODES[name]
+    name: str
+    pops: int
+    pushes: int
+    required: int
+    immediate: int = 0
+    family: str | None = None
 
 
-def opcode_by_value(val: int) -> OpCode:
-    """
-    Mapping: Retrieves the OpCode object with the given value.
-
-    Throws:
-      LookupError: if there is no opcode defined with the given value.
-    """
-    if val not in BYTECODES:
-        raise LookupError("No opcode with value '0x{:02X}'.".format(val))
-    return BYTECODES[val]
+_info = {}
 
 
-def missing_opcode(val: int) -> OpCode:
-    """
-    Produces a new OpCode with the given value, as long as that is
-    an unknown code.
+def _define(name, opcode, pops, pushes, *, required=None, immediate=0, family=None):
+    """Register one unique opcode and return its one-byte encoding."""
+    if type(opcode) is not bytes or len(opcode) != 1 or opcode in _info:
+        raise ValueError("opcode must be a unique single byte")
+    _info[opcode] = InstructionInfo(name, pops, pushes,
+        pops if required is None else required, immediate, family)
+    return opcode
 
-    Throws:
-      ValueError: if there is an opcode defined with the given value.
-    """
-    if val in BYTECODES:
-        raise ValueError("Opcode {} exists.")
-    return OpCode("MISSING", val, 0, 0)
+
+STOP = _define("STOP", b"\x00", 0, 0)
+ADD = _define("ADD", b"\x01", 2, 1)
+MUL = _define("MUL", b"\x02", 2, 1)
+SUB = _define("SUB", b"\x03", 2, 1)
+DIV = _define("DIV", b"\x04", 2, 1)
+SDIV = _define("SDIV", b"\x05", 2, 1)
+MOD = _define("MOD", b"\x06", 2, 1)
+SMOD = _define("SMOD", b"\x07", 2, 1)
+ADDMOD = _define("ADDMOD", b"\x08", 3, 1)
+MULMOD = _define("MULMOD", b"\x09", 3, 1)
+EXP = _define("EXP", b"\x0a", 2, 1)
+SIGNEXTEND = _define("SIGNEXTEND", b"\x0b", 2, 1)
+LT = _define("LT", b"\x10", 2, 1)
+GT = _define("GT", b"\x11", 2, 1)
+SLT = _define("SLT", b"\x12", 2, 1)
+SGT = _define("SGT", b"\x13", 2, 1)
+EQ = _define("EQ", b"\x14", 2, 1)
+ISZERO = _define("ISZERO", b"\x15", 1, 1)
+AND = _define("AND", b"\x16", 2, 1)
+OR = _define("OR", b"\x17", 2, 1)
+XOR = _define("XOR", b"\x18", 2, 1)
+NOT = _define("NOT", b"\x19", 1, 1)
+BYTE = _define("BYTE", b"\x1a", 2, 1)
+SHL = _define("SHL", b"\x1b", 2, 1)
+SHR = _define("SHR", b"\x1c", 2, 1)
+SAR = _define("SAR", b"\x1d", 2, 1)
+KECCAK256 = _define("KECCAK256", b"\x20", 2, 1)
+ADDRESS = _define("ADDRESS", b"\x30", 0, 1)
+BALANCE = _define("BALANCE", b"\x31", 1, 1)
+ORIGIN = _define("ORIGIN", b"\x32", 0, 1)
+CALLER = _define("CALLER", b"\x33", 0, 1)
+CALLVALUE = _define("CALLVALUE", b"\x34", 0, 1)
+CALLDATALOAD = _define("CALLDATALOAD", b"\x35", 1, 1)
+CALLDATASIZE = _define("CALLDATASIZE", b"\x36", 0, 1)
+CALLDATACOPY = _define("CALLDATACOPY", b"\x37", 3, 0)
+CODESIZE = _define("CODESIZE", b"\x38", 0, 1)
+CODECOPY = _define("CODECOPY", b"\x39", 3, 0)
+GASPRICE = _define("GASPRICE", b"\x3a", 0, 1)
+EXTCODESIZE = _define("EXTCODESIZE", b"\x3b", 1, 1)
+EXTCODECOPY = _define("EXTCODECOPY", b"\x3c", 4, 0)
+RETURNDATASIZE = _define("RETURNDATASIZE", b"\x3d", 0, 1)
+RETURNDATACOPY = _define("RETURNDATACOPY", b"\x3e", 3, 0)
+EXTCODEHASH = _define("EXTCODEHASH", b"\x3f", 1, 1)
+BLOCKHASH = _define("BLOCKHASH", b"\x40", 1, 1)
+COINBASE = _define("COINBASE", b"\x41", 0, 1)
+TIMESTAMP = _define("TIMESTAMP", b"\x42", 0, 1)
+NUMBER = _define("NUMBER", b"\x43", 0, 1)
+PREVRANDAO = _define("PREVRANDAO", b"\x44", 0, 1)
+GASLIMIT = _define("GASLIMIT", b"\x45", 0, 1)
+CHAINID = _define("CHAINID", b"\x46", 0, 1)
+SELFBALANCE = _define("SELFBALANCE", b"\x47", 0, 1)
+BASEFEE = _define("BASEFEE", b"\x48", 0, 1)
+BLOBHASH = _define("BLOBHASH", b"\x49", 1, 1)
+BLOBBASEFEE = _define("BLOBBASEFEE", b"\x4a", 0, 1)
+POP = _define("POP", b"\x50", 1, 0)
+MLOAD = _define("MLOAD", b"\x51", 1, 1)
+MSTORE = _define("MSTORE", b"\x52", 2, 0)
+MSTORE8 = _define("MSTORE8", b"\x53", 2, 0)
+SLOAD = _define("SLOAD", b"\x54", 1, 1)
+SSTORE = _define("SSTORE", b"\x55", 2, 0)
+JUMP = _define("JUMP", b"\x56", 1, 0)
+JUMPI = _define("JUMPI", b"\x57", 2, 0)
+PC = _define("PC", b"\x58", 0, 1)
+MSIZE = _define("MSIZE", b"\x59", 0, 1)
+GAS = _define("GAS", b"\x5a", 0, 1)
+JUMPDEST = _define("JUMPDEST", b"\x5b", 0, 0)
+TLOAD = _define("TLOAD", b"\x5c", 1, 1)
+TSTORE = _define("TSTORE", b"\x5d", 2, 0)
+MCOPY = _define("MCOPY", b"\x5e", 3, 0)
+PUSH0 = _define("PUSH0", b"\x5f", 0, 1, immediate=0, family="push")
+PUSH1 = _define("PUSH1", b"\x60", 0, 1, immediate=1, family="push")
+PUSH2 = _define("PUSH2", b"\x61", 0, 1, immediate=2, family="push")
+PUSH3 = _define("PUSH3", b"\x62", 0, 1, immediate=3, family="push")
+PUSH4 = _define("PUSH4", b"\x63", 0, 1, immediate=4, family="push")
+PUSH5 = _define("PUSH5", b"\x64", 0, 1, immediate=5, family="push")
+PUSH6 = _define("PUSH6", b"\x65", 0, 1, immediate=6, family="push")
+PUSH7 = _define("PUSH7", b"\x66", 0, 1, immediate=7, family="push")
+PUSH8 = _define("PUSH8", b"\x67", 0, 1, immediate=8, family="push")
+PUSH9 = _define("PUSH9", b"\x68", 0, 1, immediate=9, family="push")
+PUSH10 = _define("PUSH10", b"\x69", 0, 1, immediate=10, family="push")
+PUSH11 = _define("PUSH11", b"\x6a", 0, 1, immediate=11, family="push")
+PUSH12 = _define("PUSH12", b"\x6b", 0, 1, immediate=12, family="push")
+PUSH13 = _define("PUSH13", b"\x6c", 0, 1, immediate=13, family="push")
+PUSH14 = _define("PUSH14", b"\x6d", 0, 1, immediate=14, family="push")
+PUSH15 = _define("PUSH15", b"\x6e", 0, 1, immediate=15, family="push")
+PUSH16 = _define("PUSH16", b"\x6f", 0, 1, immediate=16, family="push")
+PUSH17 = _define("PUSH17", b"\x70", 0, 1, immediate=17, family="push")
+PUSH18 = _define("PUSH18", b"\x71", 0, 1, immediate=18, family="push")
+PUSH19 = _define("PUSH19", b"\x72", 0, 1, immediate=19, family="push")
+PUSH20 = _define("PUSH20", b"\x73", 0, 1, immediate=20, family="push")
+PUSH21 = _define("PUSH21", b"\x74", 0, 1, immediate=21, family="push")
+PUSH22 = _define("PUSH22", b"\x75", 0, 1, immediate=22, family="push")
+PUSH23 = _define("PUSH23", b"\x76", 0, 1, immediate=23, family="push")
+PUSH24 = _define("PUSH24", b"\x77", 0, 1, immediate=24, family="push")
+PUSH25 = _define("PUSH25", b"\x78", 0, 1, immediate=25, family="push")
+PUSH26 = _define("PUSH26", b"\x79", 0, 1, immediate=26, family="push")
+PUSH27 = _define("PUSH27", b"\x7a", 0, 1, immediate=27, family="push")
+PUSH28 = _define("PUSH28", b"\x7b", 0, 1, immediate=28, family="push")
+PUSH29 = _define("PUSH29", b"\x7c", 0, 1, immediate=29, family="push")
+PUSH30 = _define("PUSH30", b"\x7d", 0, 1, immediate=30, family="push")
+PUSH31 = _define("PUSH31", b"\x7e", 0, 1, immediate=31, family="push")
+PUSH32 = _define("PUSH32", b"\x7f", 0, 1, immediate=32, family="push")
+DUP1 = _define("DUP1", b"\x80", 0, 1, required=1, family="dup")
+DUP2 = _define("DUP2", b"\x81", 0, 1, required=2, family="dup")
+DUP3 = _define("DUP3", b"\x82", 0, 1, required=3, family="dup")
+DUP4 = _define("DUP4", b"\x83", 0, 1, required=4, family="dup")
+DUP5 = _define("DUP5", b"\x84", 0, 1, required=5, family="dup")
+DUP6 = _define("DUP6", b"\x85", 0, 1, required=6, family="dup")
+DUP7 = _define("DUP7", b"\x86", 0, 1, required=7, family="dup")
+DUP8 = _define("DUP8", b"\x87", 0, 1, required=8, family="dup")
+DUP9 = _define("DUP9", b"\x88", 0, 1, required=9, family="dup")
+DUP10 = _define("DUP10", b"\x89", 0, 1, required=10, family="dup")
+DUP11 = _define("DUP11", b"\x8a", 0, 1, required=11, family="dup")
+DUP12 = _define("DUP12", b"\x8b", 0, 1, required=12, family="dup")
+DUP13 = _define("DUP13", b"\x8c", 0, 1, required=13, family="dup")
+DUP14 = _define("DUP14", b"\x8d", 0, 1, required=14, family="dup")
+DUP15 = _define("DUP15", b"\x8e", 0, 1, required=15, family="dup")
+DUP16 = _define("DUP16", b"\x8f", 0, 1, required=16, family="dup")
+SWAP1 = _define("SWAP1", b"\x90", 0, 0, required=2, family="swap")
+SWAP2 = _define("SWAP2", b"\x91", 0, 0, required=3, family="swap")
+SWAP3 = _define("SWAP3", b"\x92", 0, 0, required=4, family="swap")
+SWAP4 = _define("SWAP4", b"\x93", 0, 0, required=5, family="swap")
+SWAP5 = _define("SWAP5", b"\x94", 0, 0, required=6, family="swap")
+SWAP6 = _define("SWAP6", b"\x95", 0, 0, required=7, family="swap")
+SWAP7 = _define("SWAP7", b"\x96", 0, 0, required=8, family="swap")
+SWAP8 = _define("SWAP8", b"\x97", 0, 0, required=9, family="swap")
+SWAP9 = _define("SWAP9", b"\x98", 0, 0, required=10, family="swap")
+SWAP10 = _define("SWAP10", b"\x99", 0, 0, required=11, family="swap")
+SWAP11 = _define("SWAP11", b"\x9a", 0, 0, required=12, family="swap")
+SWAP12 = _define("SWAP12", b"\x9b", 0, 0, required=13, family="swap")
+SWAP13 = _define("SWAP13", b"\x9c", 0, 0, required=14, family="swap")
+SWAP14 = _define("SWAP14", b"\x9d", 0, 0, required=15, family="swap")
+SWAP15 = _define("SWAP15", b"\x9e", 0, 0, required=16, family="swap")
+SWAP16 = _define("SWAP16", b"\x9f", 0, 0, required=17, family="swap")
+LOG0 = _define("LOG0", b"\xa0", 2, 0, family="log")
+LOG1 = _define("LOG1", b"\xa1", 3, 0, family="log")
+LOG2 = _define("LOG2", b"\xa2", 4, 0, family="log")
+LOG3 = _define("LOG3", b"\xa3", 5, 0, family="log")
+LOG4 = _define("LOG4", b"\xa4", 6, 0, family="log")
+CREATE = _define("CREATE", b"\xf0", 3, 1)
+CALL = _define("CALL", b"\xf1", 7, 1)
+CALLCODE = _define("CALLCODE", b"\xf2", 7, 1)
+RETURN = _define("RETURN", b"\xf3", 2, 0)
+DELEGATECALL = _define("DELEGATECALL", b"\xf4", 6, 1)
+CREATE2 = _define("CREATE2", b"\xf5", 4, 1)
+STATICCALL = _define("STATICCALL", b"\xfa", 6, 1)
+REVERT = _define("REVERT", b"\xfd", 2, 0)
+INVALID = _define("INVALID", b"\xfe", 0, 0)
+SELFDESTRUCT = _define("SELFDESTRUCT", b"\xff", 1, 0)
+
+INFO = MappingProxyType(_info)
+BY_VALUE = tuple(INFO.get(bytes([value])) for value in range(256))
+BY_NAME = MappingProxyType({info.name: opcode for opcode, info in INFO.items()})
+del _info, _define

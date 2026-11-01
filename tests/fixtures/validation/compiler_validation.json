@@ -1,0 +1,431 @@
+{
+  "python_implementation": "CPython",
+  "oracle": "evmole 0.9.4",
+  "fixtures": [
+    {
+      "fixture": "solidity_0426_optimized.hex",
+      "bytes": 784,
+      "functions": 17,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.022209909999219235,
+      "statistics": {
+        "instructions_executed": 414,
+        "states_enqueued": 58,
+        "branches_pruned": 1,
+        "bytecode_bytes": 784
+      },
+      "evmole_entry_pcs": {
+        "164b045a": 242,
+        "2ae1431c": 281,
+        "2f4dc9da": 305,
+        "364605a1": 316,
+        "68dd531a": 327,
+        "6fec6acf": 351,
+        "8b2138bc": 362,
+        "944ee876": 386,
+        "9adbf691": 397,
+        "9b7c2962": 408,
+        "bf3724af": 432,
+        "c28cb1d4": 456,
+        "cf35f823": 480,
+        "d7531d91": 491,
+        "d7b7913b": 515,
+        "dfaf8317": 526,
+        "fd1871e5": 550
+      }
+    },
+    {
+      "fixture": "solidity_0426_unoptimized.hex",
+      "bytes": 1592,
+      "functions": 17,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.024375958000746323,
+      "statistics": {
+        "instructions_executed": 735,
+        "states_enqueued": 58,
+        "branches_pruned": 1,
+        "bytecode_bytes": 1592
+      },
+      "evmole_entry_pcs": {
+        "164b045a": 243,
+        "2ae1431c": 286,
+        "2f4dc9da": 351,
+        "364605a1": 403,
+        "68dd531a": 455,
+        "6fec6acf": 520,
+        "8b2138bc": 572,
+        "944ee876": 637,
+        "9adbf691": 689,
+        "9b7c2962": 741,
+        "bf3724af": 806,
+        "c28cb1d4": 871,
+        "cf35f823": 936,
+        "d7531d91": 988,
+        "d7b7913b": 1053,
+        "dfaf8317": 1105,
+        "fd1871e5": 1170
+      }
+    },
+    {
+      "fixture": "solidity_0517_optimized.hex",
+      "bytes": 1095,
+      "functions": 17,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.026359305000369204,
+      "statistics": {
+        "instructions_executed": 666,
+        "states_enqueued": 96,
+        "branches_pruned": 1,
+        "bytecode_bytes": 1095
+      },
+      "evmole_entry_pcs": {
+        "164b045a": 256,
+        "2ae1431c": 295,
+        "2f4dc9da": 337,
+        "364605a1": 366,
+        "68dd531a": 395,
+        "6fec6acf": 437,
+        "8b2138bc": 466,
+        "944ee876": 508,
+        "9adbf691": 537,
+        "9b7c2962": 566,
+        "bf3724af": 608,
+        "c28cb1d4": 650,
+        "cf35f823": 692,
+        "d7531d91": 721,
+        "d7b7913b": 763,
+        "dfaf8317": 792,
+        "fd1871e5": 834
+      }
+    },
+    {
+      "fixture": "solidity_0517_unoptimized.hex",
+      "bytes": 1838,
+      "functions": 17,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.026593525002681417,
+      "statistics": {
+        "instructions_executed": 922,
+        "states_enqueued": 96,
+        "branches_pruned": 1,
+        "bytecode_bytes": 1838
+      },
+      "evmole_entry_pcs": {
+        "164b045a": 256,
+        "2ae1431c": 299,
+        "2f4dc9da": 378,
+        "364605a1": 444,
+        "68dd531a": 510,
+        "6fec6acf": 589,
+        "8b2138bc": 655,
+        "944ee876": 734,
+        "9adbf691": 800,
+        "9b7c2962": 866,
+        "bf3724af": 945,
+        "c28cb1d4": 1024,
+        "cf35f823": 1103,
+        "d7531d91": 1169,
+        "d7b7913b": 1248,
+        "dfaf8317": 1314,
+        "fd1871e5": 1393
+      }
+    },
+    {
+      "fixture": "solidity_0819_optimized.hex",
+      "bytes": 1103,
+      "functions": 17,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.024102837000100408,
+      "statistics": {
+        "instructions_executed": 917,
+        "states_enqueued": 110,
+        "branches_pruned": 1,
+        "bytecode_bytes": 1103
+      },
+      "evmole_entry_pcs": {
+        "164b045a": 282,
+        "2ae1431c": 322,
+        "2f4dc9da": 354,
+        "364605a1": 373,
+        "68dd531a": 392,
+        "6fec6acf": 424,
+        "8b2138bc": 443,
+        "944ee876": 475,
+        "9adbf691": 494,
+        "9b7c2962": 513,
+        "bf3724af": 545,
+        "c28cb1d4": 577,
+        "cf35f823": 609,
+        "d7531d91": 628,
+        "d7b7913b": 660,
+        "dfaf8317": 679,
+        "fd1871e5": 711
+      }
+    },
+    {
+      "fixture": "solidity_0819_unoptimized.hex",
+      "bytes": 1966,
+      "functions": 17,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.2381000729983498,
+      "statistics": {
+        "instructions_executed": 1912,
+        "states_enqueued": 110,
+        "branches_pruned": 1,
+        "bytecode_bytes": 1966
+      },
+      "evmole_entry_pcs": {
+        "164b045a": 282,
+        "2ae1431c": 325,
+        "2f4dc9da": 386,
+        "364605a1": 434,
+        "68dd531a": 482,
+        "6fec6acf": 543,
+        "8b2138bc": 591,
+        "944ee876": 652,
+        "9adbf691": 700,
+        "9b7c2962": 748,
+        "bf3724af": 809,
+        "c28cb1d4": 870,
+        "cf35f823": 931,
+        "d7531d91": 979,
+        "d7b7913b": 1040,
+        "dfaf8317": 1088,
+        "fd1871e5": 1149
+      }
+    },
+    {
+      "fixture": "solidity_0830_optimized.hex",
+      "bytes": 1055,
+      "functions": 17,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.02172213800076861,
+      "statistics": {
+        "instructions_executed": 842,
+        "states_enqueued": 96,
+        "branches_pruned": 1,
+        "bytecode_bytes": 1055
+      },
+      "evmole_entry_pcs": {
+        "164b045a": 264,
+        "2ae1431c": 302,
+        "2f4dc9da": 333,
+        "364605a1": 352,
+        "68dd531a": 371,
+        "6fec6acf": 402,
+        "8b2138bc": 421,
+        "944ee876": 452,
+        "9adbf691": 471,
+        "9b7c2962": 490,
+        "bf3724af": 521,
+        "c28cb1d4": 552,
+        "cf35f823": 583,
+        "d7531d91": 602,
+        "d7b7913b": 633,
+        "dfaf8317": 652,
+        "fd1871e5": 683
+      }
+    },
+    {
+      "fixture": "solidity_0830_optimized_viair.hex",
+      "bytes": 1023,
+      "functions": 17,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.01450644599754014,
+      "statistics": {
+        "instructions_executed": 566,
+        "states_enqueued": 93,
+        "branches_pruned": 2,
+        "bytecode_bytes": 1023
+      },
+      "evmole_entry_pcs": {
+        "164b045a": 944,
+        "2ae1431c": 911,
+        "2f4dc9da": 869,
+        "364605a1": 827,
+        "68dd531a": 780,
+        "6fec6acf": 738,
+        "8b2138bc": 691,
+        "944ee876": 649,
+        "9adbf691": 607,
+        "9b7c2962": 560,
+        "bf3724af": 513,
+        "c28cb1d4": 466,
+        "cf35f823": 424,
+        "d7531d91": 377,
+        "d7b7913b": 335,
+        "dfaf8317": 288,
+        "fd1871e5": 225
+      }
+    },
+    {
+      "fixture": "solidity_0830_unoptimized.hex",
+      "bytes": 1898,
+      "functions": 17,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.03255740600070567,
+      "statistics": {
+        "instructions_executed": 1849,
+        "states_enqueued": 96,
+        "branches_pruned": 1,
+        "bytecode_bytes": 1898
+      },
+      "evmole_entry_pcs": {
+        "164b045a": 268,
+        "2ae1431c": 310,
+        "2f4dc9da": 370,
+        "364605a1": 418,
+        "68dd531a": 466,
+        "6fec6acf": 526,
+        "8b2138bc": 574,
+        "944ee876": 634,
+        "9adbf691": 682,
+        "9b7c2962": 730,
+        "bf3724af": 790,
+        "c28cb1d4": 850,
+        "cf35f823": 910,
+        "d7531d91": 958,
+        "d7b7913b": 1018,
+        "dfaf8317": 1066,
+        "fd1871e5": 1126
+      }
+    },
+    {
+      "fixture": "solidity_0830_unoptimized_viair.hex",
+      "bytes": 2710,
+      "functions": 17,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.11115272499955609,
+      "statistics": {
+        "instructions_executed": 2306,
+        "states_enqueued": 101,
+        "branches_pruned": 2,
+        "bytecode_bytes": 2710
+      },
+      "evmole_entry_pcs": {
+        "164b045a": 309,
+        "2ae1431c": 304,
+        "2f4dc9da": 299,
+        "364605a1": 294,
+        "68dd531a": 289,
+        "6fec6acf": 284,
+        "8b2138bc": 279,
+        "944ee876": 274,
+        "9adbf691": 269,
+        "9b7c2962": 264,
+        "bf3724af": 259,
+        "c28cb1d4": 254,
+        "cf35f823": 249,
+        "d7531d91": 244,
+        "d7b7913b": 239,
+        "dfaf8317": 234,
+        "fd1871e5": 230
+      }
+    },
+    {
+      "fixture": "vyper_040_codesize.hex",
+      "bytes": 473,
+      "functions": 12,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.025778986997465836,
+      "statistics": {
+        "instructions_executed": 1446,
+        "states_enqueued": 101,
+        "branches_pruned": 0,
+        "bytecode_bytes": 473
+      },
+      "evmole_entry_pcs": {
+        "2ae1431c": 65,
+        "364605a1": 65,
+        "68dd531a": 65,
+        "6fec6acf": 65,
+        "944ee876": 65,
+        "9adbf691": 65,
+        "9b7c2962": 65,
+        "bf3724af": 65,
+        "cf35f823": 65,
+        "d7531d91": 65,
+        "d7b7913b": 65,
+        "dfaf8317": 65
+      }
+    },
+    {
+      "fixture": "vyper_040_gas.hex",
+      "bytes": 586,
+      "functions": 12,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.01769514600164257,
+      "statistics": {
+        "instructions_executed": 894,
+        "states_enqueued": 133,
+        "branches_pruned": 36,
+        "bytecode_bytes": 586
+      },
+      "evmole_entry_pcs": {
+        "2ae1431c": 36,
+        "364605a1": 433,
+        "68dd531a": 478,
+        "6fec6acf": 388,
+        "944ee876": 524,
+        "9adbf691": 115,
+        "9b7c2962": 69,
+        "bf3724af": 160,
+        "cf35f823": 343,
+        "d7531d91": 297,
+        "d7b7913b": 206,
+        "dfaf8317": 251
+      }
+    },
+    {
+      "fixture": "vyper_040_none.hex",
+      "bytes": 873,
+      "functions": 12,
+      "complete": true,
+      "entry_offset_differences_from_evmole": {},
+      "median_seconds": 0.025826913999480894,
+      "statistics": {
+        "instructions_executed": 559,
+        "states_enqueued": 66,
+        "branches_pruned": 1,
+        "bytecode_bytes": 873
+      },
+      "evmole_entry_pcs": {
+        "2ae1431c": 31,
+        "364605a1": 519,
+        "68dd531a": 585,
+        "6fec6acf": 658,
+        "944ee876": 797,
+        "9adbf691": 102,
+        "9b7c2962": 446,
+        "bf3724af": 168,
+        "cf35f823": 380,
+        "d7531d91": 307,
+        "d7b7913b": 241,
+        "dfaf8317": 724
+      }
+    }
+  ],
+  "reference_sha256": {
+    "fourbytes.py": "88e7766dd3ba04cff21bedcb252889b560f6b8deaac72a7b01bdb63d1da82c30",
+    "opcodes.py": "f0d4715fd5c658c974e445e722c94ecd680aded8ff153a8802ab8225fccae654",
+    "metadata.py": "ea1fb95f037a7781764d0791e8b9906ad3874e84c3418aa6542030af2f0b9157",
+    "section.py": "dab68178bea015d0c86a91755f59ac3a8fa84e6d2347005b7a7069e9acc23ad3",
+    "__init__.py": "2a30f0515efc7405edc7bafd3b37ac87e552e41e49ff9276aace5526a1771fde"
+  },
+  "python_version": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+  "interpreter_sha256": "d51d5a88e7298fadc85903108a758d955623f8d473156e6accd401b3c3a95869",
+  "timings_interpreter_sha256": "7355e5a8b8c4fd6f54489dc501bebbe80e428ed8400b8cf154e28be7362793b0",
+  "timing_note": "Fixture timings were recorded before the opcode-table refactor; complete fixture analysis outputs are unchanged."
+}

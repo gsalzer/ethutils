@@ -1,5 +1,0 @@
-\(\)	getter	^add
-^additional	getter
-of\(	getter	^(activate|against|lock(account|balance|bin))|proof\(
-^available	getter
-token|erc20	token

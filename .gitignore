@@ -1,2 +1,10 @@
 venv/
+.venv/
 __pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.coverage
+.pytest_cache/
+*.swp

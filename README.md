@@ -1,44 +1,59 @@
-*If you are looking for the version used in our [EMSE 2024 paper](https://arxiv.org/abs/2303.10517), do `git checkout emse2024`.*
+# ethutils
 
-# ethutils: Utilities for the Analysis of Ethereum Smart Contracts
+`ethutils` is a Python package for inspecting Ethereum Virtual Machine bytecode.
+It disassembles and normalizes bytecode, extracts compiler metadata, identifies
+code and data sections, discovers function selectors, performs bounded symbolic
+behavior analysis, and compares the structure and observed behavior of programs.
 
-## Installation on GNU/Linux and Unix
+## Installation
 
-Before continuing, ensure that `python3` is installed.
+Install the latest version directly from GitHub:
 
-```bash
-git clone https://github.com/gsalzer/ethutils.git # clone git repository
+```console
+python -m pip install "git+https://github.com/gsalzer/ethutils.git"
+```
+
+For development, clone the repository and install it in editable mode:
+
+```console
+git clone https://github.com/gsalzer/ethutils.git
 cd ethutils
-python3 -m venv venv                              # set up a virtual environment for Python
-source venv/bin/activate                          # ... and activate it
-pip install cbor2                                 # install dependencies
+python -m pip install -e .
 ```
 
-## Installation via setup-venv.sh on GNU/Linux and Unix
+Python 3.10 or newer is required.
 
-Before continuing, ensure that `python3` is installed.
+## Entry points
 
-```bash
-git clone https://github.com/gsalzer/ethutils.git # clone git repository
-cd ethutils
-./setup-venv.sh                                   # set up a virtual environment for Python, install poetry and install the tools
+- `extract_metadata` — Find and decode Solidity-style CBOR metadata blocks.
+- `zero_metadata` — Replace recognized metadata bytes with zero bytes.
+- `skeleton` — Remove recognized metadata and normalize PUSH instructions.
+- `section` — Return overlapping code, data, returned-code, and metadata sections.
+- `decompose` — Partition input bytes into non-overlapping fragments tagged as code, data, or metadata.
+- `runtime` — Infer runtime code from creation bytecode.
+- `selectors` — Discover function selectors and report discovery completeness.
+- `properties` — Summarize function and non-selector-route behavior.
+- `compatible` — Check bytecodes for semantic compatibility by a structural and behavioral analysis.
+
+## Testing
+
+Run the self-contained test suite from the repository root:
+
+```console
+python -m unittest discover -s tests -t .
 ```
 
-## Installation via `pip`
+See [API.md](API.md) for the complete API reference, including arguments and
+return values.
 
-Most recent version:
+## History
 
-```bash
-pip install git+https://github.com/gsalzer/ethutils.git@main#egg=ethutils
-```
+- Versions up to and including 0.1.3 used regular expressions to perform
+  sectioning and selector extraction. This is _much_ faster than the symbolic
+  execution approach chosen for 0.2.0 and later versions, but is less robust, as
+  the expressions have to be updated when compilers generate new patterns.
 
-Specific commit identified by `COMMIT_HASH`:
-```bash
-pip install git+https://github.com/gsalzer/ethutils.git@COMMIT_HASH#egg=ethutils
-```
+- For the version used in our [ICBC 2024 paper](https://doi.org/10.1109/ICBC59979.2024.10634441), checkout the release tagged `icbc2024`.
 
-## Contents of the repository
-
-* [Documentation and code samples](doc)
-* [Python scripts for manipulating bytecodes](ethutils)
-* [Bash script for the rule-based classification of Solidity function headers](headers)
+- For the version used in our [EMSE 2024 paper](https://doi.org/10.1007/s10664-023-10414-8),
+  checkout the release tagged `emse2024`.
