@@ -20,11 +20,10 @@ from ethutils import zero_metadata
 
 payload = cbor2.dumps({"solc": b"v"})
 metadata = payload + len(payload).to_bytes(2, "big")
-code = b"\x60\x01" + metadata + b"\x00"
+code = b"\x60\x01" + metadata + b"\xfe"
 
-result = zero_metadata(code)
-result == b"\x60\x01" + b"\x00" * len(metadata) + b"\x00"
-# True
-len(result) == len(code)
-# True
+code.hex()
+# '6001a164736f6c6341760008fe'
+zero_metadata(code).hex()
+# '600100000000000000000000fe'
 ```

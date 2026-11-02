@@ -21,8 +21,11 @@ from ethutils import skeleton
 
 payload = cbor2.dumps({"solc": b"v"})
 metadata = payload + len(payload).to_bytes(2, "big")
-code = bytes.fromhex("60015b") + metadata + bytes.fromhex("00")
+code = bytes.fromhex("6001ff") + metadata + bytes.fromhex("fe")
+
+code.hex()
+# '6001ffa164736f6c6341760008fe' # PUSH1 0x01, SELFDESTRUCT, {"solc": b"v"}, INVALID
 
 skeleton(code).hex()
-# "5f5b00"
+# "5ffffe" # PUSH0, SELFDESTRUCT, INVALID
 ```

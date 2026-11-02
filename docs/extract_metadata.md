@@ -27,5 +27,5 @@ metadata = payload + len(payload).to_bytes(2, "big")
 code = b"\x00" + metadata
 
 extract_metadata(code)
-# [(1, len(metadata), {"solc": b"\x00\x08\x1e"})]
+# [(1, 12, {"solc": b"\x00\x08\x1e"})]
 ```

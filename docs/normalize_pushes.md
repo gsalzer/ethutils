@@ -18,6 +18,7 @@ fingerprint rather than executable replacement code.
 ```python
 from ethutils import normalize_pushes
 
-normalize_pushes(bytes.fromhex("60016112340100")).hex()
-# "5f5f0100"
+code = bytes.fromhex("60016112340100") # PUSH1 0x01, PUSH2 0x1234, ADD, STOP
+normalize_pushes(code).hex()
+# "5f5f0100" # PUSH0, PUSH0, ADD, STOP
 ```

@@ -21,6 +21,8 @@ With reuse disabled, every physical origin must participate in a bijection.
 
 ## Examples
 
+### Single programs and empty inputs
+
 ```python
 from ethutils import code_mappings
 
@@ -30,3 +32,76 @@ list(code_mappings(b"\x00", b"\x00"))
 list(code_mappings(b"", b""))
 # [()]
 ```
+
+### Duplicated and shared child programs
+
+Both byte sequences below are constructors with two possible return paths,
+selected by `CALLVALUE`. Every path returns a one-byte `STOP` runtime. The first
+constructor stores two physical copies of that runtime at origins 28 and 29;
+the second makes both paths copy the same runtime at origin 28.
+
+```python
+from ethutils import analyze_sections, code_mappings
+
+duplicated = bytes.fromhex(
+    "3461001057"        # CALLVALUE selects one of two return paths
+    "600161001c5f39"    # copy one byte from origin 28
+    "60015ff3"          # return it
+    "5b"
+    "600161001d5f39"    # copy one byte from origin 29
+    "60015ff3"          # return it
+    "00"                # runtime at origin 28
+    "00"                # runtime at origin 29
+)
+
+
+shared = bytes.fromhex(
+    "3461001057"
+    "600161001c5f39"    # first path copies origin 28
+    "60015ff3"
+    "5b"
+    "600161001c5f39"    # second path also copies origin 28
+    "60015ff3"
+    "00"
+)
+
+[program.origin for program in analyze_sections(duplicated).programs]
+# [0, 28, 29]
+
+[program.origin for program in analyze_sections(shared).programs]
+# [0, 28]
+
+list(code_mappings(duplicated, shared))
+# [((0, 0), (28, 28), (29, 28))]
+```
+
+The root programs correspond as `(0, 0)`. With reuse enabled, both physical
+runtime copies on the left may correspond to the one shared runtime on the
+right. The result therefore contains a many-to-one mapping.
+
+Disabling reuse requires a bijection of physical origins, which these program
+trees cannot provide:
+
+```python
+list(code_mappings(duplicated, shared, allow_reuse=False))
+# []
+```
+
+Mapping trace events are emitted lazily while consuming the iterator:
+
+
+```python
+events = []
+mappings = code_mappings(duplicated, shared, trace=events.append)
+events
+# []
+
+list(mappings)
+# [((0, 0), (28, 28), (29, 28))]
+
+[event for event in events if event["kind"] == "mapping"]
+# [{"kind": "mapping",
+#   "mapping": [(0, 0), (28, 28), (29, 28)],
+#   "compatible": True}]
+```
+
