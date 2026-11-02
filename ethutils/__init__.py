@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from .normalization import normalize_pushes, skeleton
     from .models import SelectorAnalysis, PropertyAnalysis, SectionAnalysis, Program, Fragment
 
-__version__ = '0.2.0'
+__version__ = '0.2.1'
 
 _EXPORTS = {
     'selectors': ('analysis', 'selectors'),

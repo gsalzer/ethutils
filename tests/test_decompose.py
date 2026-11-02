@@ -22,28 +22,28 @@ class DecomposeTests(unittest.TestCase):
         self.assert_partition(code, result)
         return result
 
-    def test_nested_code_and_metadata_leave_outer_bytes_unclassified(self):
+    def test_nested_code_and_metadata_preserve_outer_data(self):
         code = b'abcdefghijkl'
         records = [dict(kind='data', start=1, end=11),
                    dict(kind='code', start=3, end=6),
                    dict(kind='meta', start=8, end=10)]
-        expected = [('', b'a'), ('', b'bc'), ('code', b'def'), ('', b'gh'),
-                    ('meta', b'ij'), ('', b'k'), ('', b'l')]
+        expected = [('', b'a'), ('data', b'bc'), ('code', b'def'), ('data', b'gh'),
+                    ('meta', b'ij'), ('data', b'k'), ('', b'l')]
         for order in (records, records[::-1]):
             self.assertEqual(self.from_sections(code, order), expected)
 
-    def test_overlapping_decomposed_data_ranges_leave_unclassified_bytes(self):
+    def test_overlapping_data_ranges_preserve_noncode_data(self):
         records = [dict(kind='data', start=1, end=6),
                    dict(kind='data', start=4, end=9),
                    dict(kind='code', start=3, end=7)]
         self.assertEqual(self.from_sections(b'abcdefghij', records),
-                         [('', b'a'), ('', b'bc'), ('code', b'd'), ('code', b'ef'),
-                          ('code', b'g'), ('', b'hi'), ('', b'j')])
+                         [('', b'a'), ('data', b'bc'), ('code', b'd'), ('code', b'ef'),
+                          ('code', b'g'), ('data', b'hi'), ('', b'j')])
 
     def test_code_precedes_data_across_partial_overlap(self):
         records = [dict(kind='code', start=0, end=5), dict(kind='data', start=3, end=8)]
         self.assertEqual(self.from_sections(b'abcdefgh', records),
-                         [('code', b'abc'), ('code', b'de'), ('', b'fgh')])
+                         [('code', b'abc'), ('code', b'de'), ('data', b'fgh')])
 
     def test_data_touching_code_and_metadata_remains_data(self):
         records = [dict(kind='code', start=0, end=2),
@@ -57,17 +57,18 @@ class DecomposeTests(unittest.TestCase):
         self.assertEqual(self.from_sections(b'abcdefgh', records),
                          [('', b'a'), ('data', b'bc'), ('data', b'de'), ('data', b'fg'), ('', b'h')])
 
-    def test_intact_inner_data_section_survives_decomposed_outer_section(self):
+    def test_inner_boundaries_split_preserved_outer_data(self):
         records = [dict(kind='data', start=0, end=10),
                    dict(kind='code', start=2, end=4),
                    dict(kind='data', start=6, end=8)]
         self.assertEqual(self.from_sections(b'abcdefghij', records),
-                         [('', b'ab'), ('code', b'cd'), ('', b'ef'), ('data', b'gh'), ('', b'ij')])
+                         [('data', b'ab'), ('code', b'cd'), ('data', b'ef'),
+                          ('data', b'gh'), ('data', b'ij')])
 
-    def test_partial_metadata_overlap_decomposes_data_section(self):
+    def test_partial_metadata_overlap_preserves_remaining_data(self):
         records = [dict(kind='data', start=0, end=5), dict(kind='meta', start=3, end=8)]
         self.assertEqual(self.from_sections(b'abcdefgh', records),
-                         [('', b'abc'), ('meta', b'de'), ('meta', b'fgh')])
+                         [('data', b'abc'), ('meta', b'de'), ('meta', b'fgh')])
 
     def test_returned_range_alone_keeps_data_intact(self):
         records = [dict(kind='data', start=0, end=6),
@@ -92,11 +93,12 @@ class DecomposeTests(unittest.TestCase):
                    dict(kind='code', start=2, end=4, origin=2)]
         self.assertEqual(self.from_sections(b'abcd', records), [('code', b'ab'), ('code', b'cd')])
 
-    def test_touching_decomposed_data_sections_preserve_unclassified_boundary(self):
+    def test_touching_data_sections_preserve_data_boundaries(self):
         records = [dict(kind='data', start=0, end=4), dict(kind='data', start=4, end=8),
                    dict(kind='code', start=0, end=2), dict(kind='meta', start=6, end=8)]
         self.assertEqual(self.from_sections(b'abcdefgh', records),
-                         [('code', b'ab'), ('', b'cd'), ('', b'ef'), ('meta', b'gh')])
+                         [('code', b'ab'), ('data', b'cd'),
+                          ('data', b'ef'), ('meta', b'gh')])
 
     def test_returned_records_supply_no_label_or_boundary(self):
         records = [dict(kind='returned', start=1, end=4, origin=0, via=0, copy=0)]
@@ -120,8 +122,9 @@ class DecomposeTests(unittest.TestCase):
         with patch.object(sectioning, 'section', wraps=sectioning.section) as scan:
             result = ethutils.decompose(code)
         scan.assert_called_once_with(code)
-        self.assertEqual(result, [('code', code[:entry]), ('code', op.STOP), ('', b'\xaa\xbb'),
-                                  ('meta', metadata), ('', b'\xcc')])
+        self.assertEqual(result, [('code', code[:entry]), ('code', op.STOP),
+                                  ('data', b'\xaa\xbb'), ('meta', metadata),
+                                  ('data', b'\xcc')])
         self.assert_partition(code, result)
 
     def test_actual_unclassified_gap(self):

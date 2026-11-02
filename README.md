@@ -31,9 +31,12 @@ Python 3.10 or newer is required.
 - `section` — Return overlapping code, data, returned-code, and metadata sections.
 - `decompose` — Partition input bytes into non-overlapping fragments tagged as code, data, or metadata.
 - `runtime` — Infer runtime code from creation bytecode.
-- `selectors` — Discover function selectors and report discovery completeness.
+- `selectors` — Discover function selectors.
 - `properties` — Summarize function and non-selector-route behavior.
 - `compatible` — Check bytecodes for semantic compatibility by a structural and behavioral analysis.
+
+See [API.md](API.md) for the complete API reference, including arguments and
+return values.
 
 ## Testing
 
@@ -42,9 +45,6 @@ Run the self-contained test suite from the repository root:
 ```console
 python -m unittest discover -s tests -t .
 ```
-
-See [API.md](API.md) for the complete API reference, including arguments and
-return values.
 
 ## History
 

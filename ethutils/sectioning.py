@@ -94,6 +94,15 @@ class ReturnEvidence(NamedTuple):
     copy_pc: int
 
 
+class CreatedEvidence(NamedTuple):
+    """Record input bytes copied to memory and passed unchanged to CREATE/CREATE2."""
+    origin: int
+    start: int
+    end: int
+    create_pc: int
+    copy_pc: int
+
+
 class ProgramRange(NamedTuple):
     """Input range to examine as a program, with the origin of the program that copied it."""
     parent: int
@@ -142,6 +151,7 @@ class Exploration:
     copied_ranges: set[CopiedRange] = field(default_factory=set)
     copy_evidence: set[CopyEvidence] = field(default_factory=set)
     returned_copies: set[ReturnEvidence] = field(default_factory=set)
+    created_copies: set[CreatedEvidence] = field(default_factory=set)
     referenced_entries: set = field(default_factory=set)
     unresolved_jump: bool = False
     joined: bool = False
@@ -153,12 +163,15 @@ class Exploration:
         """Number of distinct jump instructions with a valid resolved destination."""
         return len(self.valid_jump_pcs)
 
-    def plausible(self, referenced=False, returned=False, bounded=False, known_bad=()):
+    def plausible(self, referenced=False, returned=False, bounded=False,
+                  touching=False, known_bad=()):
         """Decide whether a candidate region has enough evidence to classify it as code.
 
         Valid jumps, terminating instructions and connections to known code provide
-        support. referenced, returned and bounded add context about the candidate.
-        known_bad lists invalid jump targets already counted against the allowance.
+        support. referenced, returned, bounded and touching add context about the
+        candidate.  A touching candidate is a JUMPDEST-led helper immediately
+        adjacent to accepted code.  known_bad lists invalid jump targets already
+        counted against the allowance.
         """
         known_bad = set(known_bad)
         # Charge the remaining allowance only for newly encountered invalid targets.
@@ -168,6 +181,7 @@ class Exploration:
                          or self.terminators & STRONG_TERMINATORS
                          or (returned and self.terminators)
                          or (bounded and (self.terminators or self.unresolved_jump))
+                         or touching
                          or (referenced and (self.terminated or self.unresolved_jump))))
 
 
@@ -189,6 +203,7 @@ class Analyzer:
         self.accepted = {}  # origin -> exact decoded spans
         self.copied_regions: set[ProgramRange] = set()
         self.returned_copies: set[ReturnEvidence] = set()
+        self.created_copies: set[CreatedEvidence] = set()
         self.diagnostics = []
         self.references = {}
         self.bad_targets = {}
@@ -199,6 +214,11 @@ class Analyzer:
     def in_meta(self, pc):
         """Return whether an absolute input offset lies in recognized metadata."""
         return any(a <= pc < b for a, b in self.meta_ranges)
+
+    def in_copied_data(self, origin, pc):
+        """Return whether pc was copied as data by the program at origin."""
+        return any(region.parent == origin and region.start <= pc < region.end
+                   for region in self.copied_regions)
 
     def decoding(self, origin):
         """Return cached sets of instruction starts and JUMPDEST offsets for a program origin."""
@@ -211,7 +231,8 @@ class Analyzer:
             self.boundaries[origin] = starts, destinations
         return self.boundaries[origin]
 
-    def explore(self, origin, start, accepted=(), follow_jumps=True):
+    def explore(self, origin, start, accepted=(), follow_jumps=True,
+                accepted_intervals=None):
         """Follow instructions from start and collect code ranges, jumps and memory copies.
 
         Jumps use origin as program counter zero; accepted ranges end a path when
@@ -225,7 +246,8 @@ class Analyzer:
         work = deque([(start, (), ())])
         states = {}
         widened = {}
-        accepted = intervals(accepted)
+        accepted = (intervals(accepted) if accepted_intervals is None
+                    else accepted_intervals)
         literal_pushes = None
         while work:
             pc, stack, memory = work.popleft()
@@ -359,6 +381,14 @@ class Analyzer:
                                 first = copied.source + offset - copied.start
                                 result.returned_copies.add(ReturnEvidence(
                                     origin, first, first+length, pc, copied.copy_pc))
+                elif name in {'CREATE', 'CREATE2'}:
+                    offset, length = args[1], args[2]
+                    if offset is not None and length is not None and length > 0:
+                        for copied in memory:
+                            if copied.start <= offset and offset+length <= copied.end:
+                                first = copied.source + offset - copied.start
+                                result.created_copies.add(CreatedEvidence(
+                                    origin, first, first+length, pc, copied.copy_pc))
                 if len(memory) > 32:
                     memory = ()  # Discard copy records when their count exceeds the memory-tracking limit.
                 if name == 'PC': stack.append(_TracedConstant(pc-origin, [pc]) if self.trace else pc-origin)
@@ -383,20 +413,43 @@ class Analyzer:
         self.bad_targets.setdefault(origin, set()).update(result.invalid_jump_targets)
         self.references.setdefault(origin, set()).update(result.referenced_entries)
         self.returned_copies.update(result.returned_copies)
+        self.created_copies.update(result.created_copies)
         self.copy_evidence.update(result.copy_evidence)
         for copied in result.copied_ranges:
             self.copied_regions.add(ProgramRange(origin, copied.start, copied.start + copied.length))
 
-    def bounded_fragment(self, origin, start, result):
+    def bounded_fragment(self, origin, start, result, covered=None):
         """Check whether a short JUMPDEST-led region fills a gap between known code ranges."""
-        spans = intervals(result.spans)
-        if len(spans) != 1 or spans[0][0] != start:
+        if not result.spans:
             return False
-        end = spans[0][1]
+        left = min(a for a, b in result.spans)
+        end = max(b for a, b in result.spans)
+        # Instruction spans do not overlap.  Equal total and enclosing lengths
+        # therefore mean that they form one contiguous interval.
+        contiguous = sum(b-a for a, b in result.spans) == end-left
+        if left != start or not contiguous:
+            return False
         if end-start > MAX_CONTEXT_FRAGMENT or start not in self.decoding(origin)[1]:
             return False
-        covered = intervals(self.accepted.get(origin, ()))
+        if covered is None:
+            covered = intervals(self.accepted.get(origin, ()))
         return any(b == start for a, b in covered) and any(a == end for a, b in covered)
+
+    def touching_fragment(self, origin, start, result, covered=None):
+        """Return whether a JUMPDEST-led candidate touches accepted code.
+
+        This is the block-connectivity evidence used by the experimental
+        sectioner: a helper may extend code on either side even when a weak
+        STOP, INVALID or constant exceptional jump would not be sufficient in
+        isolation.  Ordinary plausibility checks still reject undefined
+        opcodes, truncated pushes and excess new invalid jump targets.
+        """
+        if start not in self.decoding(origin)[1] or not result.spans:
+            return False
+        if covered is None:
+            covered = intervals(self.accepted.get(origin, ()))
+        return any(b == start for a, b in covered) or any(
+            right == a for left, right in result.spans for a, b in covered)
 
     def promote_bounded_fragments(self):
         """Examine short gaps between known code ranges; return whether any become code."""
@@ -411,24 +464,34 @@ class Analyzer:
     def region(self, origin, start, trusted=False, returned=False, block=False):
         """Classify code starting at start, then examine additional entry points it references.
 
-        trusted accepts the initial region directly. returned marks bytes obtained
-        from a RETURN instruction; block restricts exploration to one basic block.
-        Return True when a new region is accepted.
+        trusted accepts the initial region directly. returned supplies contextual
+        program evidence for bytes obtained from RETURN, CREATE or CREATE2;
+        block restricts exploration to one basic block. Return True when a new
+        region is accepted.
         """
-        covered = self.accepted.get(origin, set())
-        if any(a <= start < b for a, b in covered) or self.in_meta(start):
+        accepted = self.accepted.get(origin, set())
+        if any(a <= start < b for a, b in accepted) or self.in_meta(start):
             return False
-        result = self.explore(origin, start, covered, follow_jumps=not block)
-        bounded = self.bounded_fragment(origin, start, result)
+        # A constant CODECOPY is positive data evidence for its owning program.
+        # Reinterpretation under a new origin requires an explicit RETURN,
+        # CREATE or CREATE2 program relation.
+        if not trusted and not returned and self.in_copied_data(origin, start):
+            return False
+        covered = intervals(accepted)
+        result = self.explore(origin, start, follow_jumps=not block,
+                              accepted_intervals=covered)
+        bounded = self.bounded_fragment(origin, start, result, covered)
+        touching = self.touching_fragment(origin, start, result, covered)
         referenced = start in self.references.get(origin, set())
         is_accepted = bool(result.spans) and (trusted or result.plausible(
-            referenced, returned=returned, bounded=bounded,
+            referenced, returned=returned, bounded=bounded, touching=touching,
             known_bad=self.bad_targets.get(origin, ())))
         # G counts valid jumps; B lists invalid targets; I lists undefined opcodes.
         self.diagnostics.append({
             'origin': origin, 'start': start, 'accepted': is_accepted,
             'recovery': 'basic_block' if block else None,
             'G': result.valid_jump_count, 'bounded_fragment': bounded,
+            'touching_fragment': touching,
             'returned_entry': returned, 'terminators': sorted(result.terminators),
             'referenced': referenced, 'unresolved_jump': result.unresolved_jump,
             'B': sorted(result.invalid_jump_targets),
@@ -445,18 +508,26 @@ class Analyzer:
         self.commit(origin, result)
         pending = set(result.candidate_entries)
         attempted = set()
+        covered = intervals(self.accepted[origin])
         while pending:
             entry = min(pending)
             pending.remove(entry)
-            if entry in attempted or any(a <= entry < b for a, b in self.accepted[origin]):
+            if entry in attempted or any(a <= entry < b for a, b in covered):
                 continue
             attempted.add(entry)
-            candidate = self.explore(origin, entry, self.accepted[origin])
+            if self.in_copied_data(origin, entry):
+                continue
+            candidate = self.explore(origin, entry, accepted_intervals=covered)
+            touching = self.touching_fragment(origin, entry, candidate, covered)
             if candidate.plausible(
                     entry in self.references.get(origin, set()),
-                    bounded=self.bounded_fragment(origin, entry, candidate),
+                    bounded=self.bounded_fragment(origin, entry, candidate, covered),
+                    touching=touching,
                     known_bad=self.bad_targets.get(origin, ())):
                 self.commit(origin, candidate)
+                # Extend the already merged coverage instead of repeatedly
+                # sorting every historical instruction span for this origin.
+                covered = intervals((*covered, *candidate.spans))
                 pending.update(candidate.candidate_entries - attempted)
         return True
 
@@ -470,11 +541,15 @@ class Analyzer:
         if cursor < self.code_size: yield cursor, self.code_size
 
     def _discover_copied_programs(self, attempted):
-        """Examine returned and copied bytes as programs; return whether code coverage grows."""
-        candidates = {ProgramCandidate(region.parent, region.start, region.end, False)
-                      for region in self.copied_regions}
-        candidates.update(ProgramCandidate(record.origin, record.start, record.end, True)
-                          for record in self.returned_copies)
+        """Examine explicitly returned or created bytes as programs; report code growth.
+
+        Plain CODECOPY establishes data, not a program origin. CODECOPY bytes
+        passed unchanged to RETURN, CREATE or CREATE2 establish one explicitly.
+        """
+        candidates = {ProgramCandidate(record.origin, record.start, record.end, True)
+                      for record in self.returned_copies}
+        candidates.update(ProgramCandidate(record.origin, record.start, record.end, False)
+                          for record in self.created_copies)
         changed = False
         # Returned subranges define a more precise extent than enclosing copies.
         for candidate in sorted(candidates - attempted, key=lambda item: (
@@ -486,9 +561,11 @@ class Analyzer:
             if start not in self.limits:
                 self.limits[start] = candidate.end
                 self.boundaries.pop(start, None)
-            if candidate.is_returned:
-                self.program_regions[start] = self.limits[start]
-            changed |= self.region(start, start, returned=candidate.is_returned)
+            self.program_regions[start] = self.limits[start]
+            # Both returned runtime and CREATE input are explicit program
+            # relations.  `returned` here supplies that contextual evidence to
+            # plausibility; output returned records remain separate.
+            changed |= self.region(start, start, returned=True)
         return changed
 
     def _candidate_origins(self, start, gap_end, origins):
@@ -520,7 +597,20 @@ class Analyzer:
                 entries.update(pc for pc in self.decoding(origin)[1]
                                if gap_start <= pc < gap_end and not self.in_meta(pc))
             for start in sorted(entries):
-                for origin in self._candidate_origins(start, gap_end, origins):
+                program_owners = [origin for origin, end in self.program_regions.items()
+                                  if origin <= start < end]
+                data_owners = {region.parent for region in self.copied_regions
+                               if region.start <= start < region.end}
+                # Copied bytes are not an invitation to invent a fresh origin.
+                # They remain eligible only inside an explicitly established
+                # returned program, and never as speculative code for the
+                # program that copied them.
+                if data_owners and not program_owners:
+                    continue
+                candidate_origins = self._candidate_origins(start, gap_end, origins)
+                for origin in candidate_origins:
+                    if origin in data_owners:
+                        continue
                     key = (origin, start)
                     if key in attempted or origin > start or start >= self.limits.get(origin, self.code_size):
                         continue
@@ -606,27 +696,20 @@ def section(code: bytes) -> list[dict]:
 def decompose(code: bytes) -> list[tuple[str, bytes]]:
     """Split bytecode into consecutive code, data, meta and unclassified chunks.
 
-    Data sections keep their label only when disjoint from code and metadata.
-    Leftover bytes of decomposed data sections have the empty tag, as do other
-    unclassified bytes. Each code, data and metadata section boundary starts
-    a new chunk, even when its tag stays the same. Concatenating the bytes
-    reproduces the original input.
+    Section boundaries atomize overlapping classifications. Metadata takes
+    precedence over code, and code over copied data; non-overlapping portions
+    of a broader data section retain their data label. Unclassified bytes use
+    the empty tag. Concatenating the bytes reproduces the original input.
     """
     sections = section(code)
-    classified = intervals((part['start'], part['end']) for part in sections
-                           if part['kind'] in {'code', 'meta'})
     priority = ('meta', 'code', 'data')
     events = {0: [], len(code): []}
     for part in sections:
         tag = part['kind']
         if tag not in priority:
             continue
-        # Keep boundaries even when a decomposed data section loses its label.
         events.setdefault(part['start'], [])
         events.setdefault(part['end'], [])
-        if tag == 'data' and any(start < part['end'] and part['start'] < end
-                                 for start, end in classified):
-            continue
         events[part['start']].append((tag, 1))
         events[part['end']].append((tag, -1))
 
@@ -682,10 +765,11 @@ def analyze_sections(code: bytes, *, trace: bool = False) -> SectionAnalysis:
         end = analyzer.limits.get(origin, len(code))
         returned = sorted(ProgramRange(record.origin, record.start, record.end)
                           for record in analyzer.returned_copies if record.start == origin)
-        copied = sorted(region for region in analyzer.copied_regions
-                        if region.start == origin and region.parent < origin)
-        evidence = 'entry' if origin == 0 else 'returned_copy' if returned else 'codecopy' if copied else 'fragment'
-        parents = returned or copied
+        created = sorted(ProgramRange(record.origin, record.start, record.end)
+                         for record in analyzer.created_copies if record.start == origin)
+        evidence = ('entry' if origin == 0 else 'returned_copy' if returned
+                    else 'created_copy' if created else 'fragment')
+        parents = returned or created
         decisions = [d for d in analyzer.diagnostics if d['origin'] == origin and d['start'] == origin]
         programs.append(Program(origin, code[origin:end], (Fragment(origin, end, 0),),
                                 evidence, parents[0].parent if parents else None,

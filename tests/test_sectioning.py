@@ -1,6 +1,6 @@
 import unittest
 import cbor2
-from ethutils.sectioning import Analyzer, ReturnEvidence, section, _constant
+from ethutils.sectioning import Analyzer, CreatedEvidence, ReturnEvidence, section, _constant
 
 class SectionTests(unittest.TestCase):
     def test_push_data_not_jumpdest(self):
@@ -19,7 +19,7 @@ class SectionTests(unittest.TestCase):
     def test_rejected_candidate_isolated(self):
         a = Analyzer(bytes.fromhex('600450005b600156'))
         a.run()
-        self.assertNotIn((4,5),a.accepted[0])
+        self.assertIn((4,5),a.accepted[0])
     def test_truncated_push_and_falloff(self):
         self.assertTrue(Analyzer(b'\x61\x00').explore(0,0).truncated_push_pcs)
         self.assertTrue(Analyzer(b'\x5f').explore(0,0).terminated)
@@ -89,14 +89,29 @@ class SectionTests(unittest.TestCase):
         self.assertEqual(section(code),[
             dict(kind='code',start=0,end=8,origin=0),
             dict(kind='data',start=8,end=len(code),origin=0)])
+    def test_copied_strong_terminator_is_data_not_a_program(self):
+        for data in (bytes.fromhex('ff'), bytes.fromhex('5b5f5ffd')):
+            with self.subTest(data=data.hex()):
+                code=bytes([0x60,len(data)])+bytes.fromhex('600860003900')+data
+                self.assertEqual(section(code),[
+                    dict(kind='code',start=0,end=8,origin=0),
+                    dict(kind='data',start=8,end=len(code),origin=0)])
+    def test_copied_create_input_is_an_explicit_program(self):
+        code=bytes.fromhex('6001600f600039600160006000f00000')
+        analyzer=Analyzer(code)
+        parts=analyzer.run()
+        self.assertEqual(analyzer.created_copies,
+                         {CreatedEvidence(0,15,16,13,6)})
+        self.assertIn(dict(kind='code',start=15,end=16,origin=15),parts)
+        self.assertIn(dict(kind='data',start=15,end=16,origin=0),parts)
     def test_referenced_helper_can_return_to_unknown_destination(self):
         code=bytes.fromhex('6006500000005b5056')
         self.assertEqual(section(code),[
             dict(kind='code',start=0,end=4,origin=0),
             dict(kind='code',start=6,end=9,origin=0)])
-    def test_unreferenced_unknown_return_is_not_sufficient(self):
+    def test_touching_unknown_return_is_helper_code(self):
         self.assertEqual(section(bytes.fromhex('005b5056')),
-                         [dict(kind='code',start=0,end=1,origin=0)])
+                         [dict(kind='code',start=0,end=4,origin=0)])
     def test_residual_search_skips_bad_prefix(self):
         self.assertEqual(section(bytes.fromhex('00aa5b600256')),[
             dict(kind='code',start=0,end=1,origin=0),
@@ -219,21 +234,43 @@ class SectionTests(unittest.TestCase):
         self.assertEqual(section(code),[dict(kind='code',start=0,end=len(code),origin=0)])
     def test_context_does_not_cross_origins(self):
         a=Analyzer(bytes.fromhex('6005565b005b00'))
-        a.accepted={0:{(0,3)},5:{(5,7)}}
+        a.accepted={0:{(0,2)},5:{(5,7)}}
         self.assertFalse(a.region(0,3))
     def test_bounded_fragment_requires_jumpdest_entry(self):
         code=bytes.fromhex('600456005b00')
         self.assertEqual(section(code),[
             dict(kind='code',start=0,end=3,origin=0),
             dict(kind='code',start=4,end=6,origin=0)])
-    def test_context_fragment_size_is_bounded(self):
+    def test_touching_fragment_need_not_be_short(self):
         code=bytes.fromhex('61002856')+b'\x5b'+b'\x50'*34+b'\x56\x5b\x00'
         a=Analyzer(code);a.run()
-        self.assertNotIn((4,5),a.accepted[0])
-    def test_context_and_bad_jump_alone_are_not_sufficient(self):
+        self.assertIn((4,5),a.accepted[0])
+    def test_touching_fragment_may_use_one_bad_jump(self):
         a=Analyzer(bytes.fromhex('6008565b60ff56005b00'))
         a.accepted={0:{(0,3),(7,10)}}
-        self.assertFalse(a.region(0,3))
+        self.assertTrue(a.region(0,3))
+
+    def test_touching_jumpdest_helper_extends_code(self):
+        for terminal in ('00', 'fe'):
+            with self.subTest(terminal=terminal):
+                code=bytes.fromhex('00'+'5b'+terminal)
+                parts=section(code)
+                self.assertEqual(parts,[dict(kind='code',start=0,end=3,origin=0)])
+
+    def test_touching_helper_can_use_one_exception_target(self):
+        code=bytes.fromhex('005b60ff56')
+        self.assertEqual(section(code),[
+            dict(kind='code',start=0,end=len(code),origin=0)])
+
+    def test_touching_helper_cannot_exceed_exception_budget(self):
+        code=bytes.fromhex('005b3460ff573460fe5756')
+        self.assertEqual(section(code),[
+            dict(kind='code',start=0,end=1,origin=0)])
+
+    def test_touching_helper_still_rejects_undefined_opcode(self):
+        code=bytes.fromhex('005baa')
+        self.assertEqual(section(code),[
+            dict(kind='code',start=0,end=1,origin=0)])
     def test_repeated_exception_destination_counts_once(self):
         r=Analyzer(bytes.fromhex('3460ff573460ff575f5ffd')).explore(0,0)
         self.assertEqual(r.invalid_jump_targets,{255})
@@ -325,12 +362,13 @@ class SectionTests(unittest.TestCase):
         code=bytes.fromhex('6001600c60003960016000f3')+b'\x00'+b'\x00'*32
         self.assertFalse(any(s.get('role')=='constructor_arguments_candidate' for s in section(code)))
 
-    def test_executable_tail_is_not_labeled_as_arguments(self):
+    def test_executable_looking_copied_tail_remains_data(self):
         code=bytes.fromhex('600460146000396001601360003960016000f3')
         code+=b'\x00'+bytes.fromhex('5b5f5ffd')
         parts=section(code)
-        self.assertTrue(any(s['kind']=='code' and s['end']==len(code) for s in parts))
-        self.assertFalse(any(s.get('role')=='constructor_arguments_candidate' for s in parts))
+        self.assertFalse(any(s['kind']=='code' and s['start']>=20 for s in parts))
+        self.assertTrue(any(s['kind']=='data' and s['start']==20 and s['end']==len(code)
+                            for s in parts))
 
     def test_returned_block_recovery_does_not_follow_other_blocks_failures(self):
         # The first block has a valid conditional edge. Its successor has two
