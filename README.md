@@ -25,15 +25,36 @@ Python 3.10 or newer is required.
 
 ## Entry points
 
+### Bytecode decoding
+
+- `parse_hex` — Convert hexadecimal text to bytes.
+- `disassemble` — Decode bytecode into EVM instruction records.
+- `instruction_boundaries` — Locate instruction starts without treating PUSH operands as instructions.
+
+### Metadata and normalization
+
 - `extract_metadata` — Find and decode Solidity-style CBOR metadata blocks.
-- `zero_metadata` — Replace recognized metadata bytes with zero bytes.
+- `zero_metadata` — Replace recognized metadata bytes with zeroes while preserving offsets.
+- `normalize_pushes` — Replace each PUSH instruction and its operand with one PUSH0.
 - `skeleton` — Remove recognized metadata and normalize PUSH instructions.
-- `section` — Return overlapping code, data, returned-code, and metadata sections.
-- `decompose` — Partition input bytes into non-overlapping fragments tagged as code, data, or metadata.
-- `runtime` — Infer runtime code from creation bytecode.
-- `selectors` — Discover function selectors.
-- `properties` — Summarize function and non-selector-route behavior.
-- `compatible` — Check bytecodes for semantic compatibility by a structural and behavioral analysis.
+
+### Selector and behavior analysis
+
+- `selectors` — Discover four-byte function selectors with bounded symbolic exploration.
+- `properties` — Summarize function behavior and non-selector call routes.
+
+### Structural sectioning
+
+- `section` — Return overlapping code, data, returned-code, and metadata ranges.
+- `analyze_sections` — Return sections, detected program images, and structural diagnostics.
+- `runtime` — Infer the runtime image returned by creation bytecode.
+- `decompose` — Partition bytecode into lossless code, data, metadata, and unclassified chunks.
+
+### Program compatibility
+
+- `compatible` — Check for a structural correspondence without an established behavioral conflict.
+- `code_mappings` — Enumerate compatible correspondences between program origins.
+- `properties_compatible` — Compare behavior summaries for established conflicts.
 
 See [API.md](API.md) for the complete API reference, including arguments and
 return values.
