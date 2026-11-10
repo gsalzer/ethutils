@@ -6,7 +6,7 @@ from unittest.mock import patch
 import cbor2
 import ethutils
 from ethutils import opcodes as op, sectioning
-from tests.helpers import Assembly
+from tests.helpers import Assembly, hex_fixture
 
 
 class DecomposeTests(unittest.TestCase):
@@ -130,6 +130,33 @@ class DecomposeTests(unittest.TestCase):
     def test_actual_unclassified_gap(self):
         code = b'\x00\xaa\xbb'
         self.assertEqual(ethutils.decompose(code), [('code', b'\x00'), ('', b'\xaa\xbb')])
+
+    def test_nested_creation_contract_fixtures(self):
+        expected = {
+            '0xa39394d3447c1dbd386b92b4d1fcc22ca85eae67-src.hex': [
+                ('code', 0, 472), ('code', 472, 1175), ('code', 1175, 3744),
+                ('data', 3744, 3776), ('code', 3776, 4479),
+                ('code', 4479, 7048), ('data', 7048, 7080),
+                ('code', 7080, 10147),
+            ],
+            '0xa39394d3447c1dbd386b92b4d1fcc22ca85eae67.hex': [
+                ('code', 0, 724), ('code', 724, 1421), ('code', 1421, 3733),
+                ('data', 3733, 3765), ('code', 3765, 4462),
+                ('code', 4462, 6774), ('data', 6774, 6806),
+                ('code', 6806, 9879),
+            ],
+        }
+        for name, ranges in expected.items():
+            with self.subTest(fixture=name):
+                code = hex_fixture(name)
+                parts = ethutils.decompose(code)
+                offset = 0
+                actual = []
+                for tag, data in parts:
+                    actual.append((tag, offset, offset + len(data)))
+                    offset += len(data)
+                self.assertEqual(actual, ranges)
+                self.assert_partition(code, parts)
 
     def test_compiler_fixtures_preserve_bytes_and_section_labels(self):
         fixtures = Path(ethutils.__file__).resolve().parent.parent / 'tests' / 'fixtures'

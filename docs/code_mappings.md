@@ -4,17 +4,23 @@
 
 ```python
 code_mappings(code1: bytes, code2: bytes, *, allow_reuse: bool = True,
+              ignore_constructor_args: bool = False,
               trace: Callable[[dict], None] | None = None
               ) -> Iterator[tuple[tuple[int, int], ...]]
 ```
 
 ## Arguments and return value
 
-The bytecode and `allow_reuse` arguments have the same meaning as for
-`compatible`. The returned iterator lazily yields distinct compatible mappings.
+The bytecode, `allow_reuse`, and `ignore_constructor_args` arguments have
+the same meaning as for `compatible`. The returned iterator lazily yields
+distinct compatible mappings.
 Each mapping is a sorted tuple of `(origin1, origin2)` pairs. Trace events,
 including a `mapping` event for every result, are emitted only while the
 iterator is consumed.
+
+The default `ignore_constructor_args=False` retains the trailing constructor
+data and programs contained in it. An explicit `True` omits the entire argument
+tail, every program originating there, and their descendants.
 
 Every detected program must be covered. Empty inputs have one empty mapping.
 With reuse disabled, every physical origin must participate in a bijection.

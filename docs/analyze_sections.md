@@ -15,6 +15,9 @@ as `section`, detected `programs`, `diagnostics`, and a `scope` description.
 Each `Program` records its absolute origin, full image, source fragments,
 discovery evidence, parent origin, entry classification, and recognized code
 ranges. `to_dict()` converts bytes to hexadecimal strings for JSON output.
+Discovery evidence is `entry`, `returned_copy`, `created_copy`, `abi_bytes`, or
+`fragment`. Diagnostics for an ABI-derived entry include its container, offset
+word, length word, payload end, and the CODECOPY that supplied the container.
 
 ## Examples
 

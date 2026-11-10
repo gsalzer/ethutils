@@ -1,8 +1,9 @@
-"""EVM opcode constants and instruction descriptions.
+"""EVM and optionally TVM opcode constants and instruction descriptions.
 
 Each mnemonic is a one-byte bytes value. INFO maps these values to names,
 stack requirements and operand sizes. BY_VALUE accepts integer byte values;
-BY_NAME maps instruction names to their opcode bytes.
+BY_NAME maps instruction names to their opcode bytes. TRON TVM extensions are
+enabled by default and can be controlled with set_tvm_opcodes_enabled().
 """
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -174,6 +175,45 @@ LOG1 = _define("LOG1", b"\xa1", 3, 0, family="log")
 LOG2 = _define("LOG2", b"\xa2", 4, 0, family="log")
 LOG3 = _define("LOG3", b"\xa3", 5, 0, family="log")
 LOG4 = _define("LOG4", b"\xa4", 6, 0, family="log")
+
+# TRON TVM extensions. These constants always exist, while their entries in
+# INFO, BY_VALUE and BY_NAME are controlled as one dialect group below.
+CALLTOKEN = b"\xd0"
+TOKENBALANCE = b"\xd1"
+CALLTOKENVALUE = b"\xd2"
+CALLTOKENID = b"\xd3"
+ISCONTRACT = b"\xd4"
+FREEZE = b"\xd5"
+UNFREEZE = b"\xd6"
+FREEZEEXPIRETIME = b"\xd7"
+VOTEWITNESS = b"\xd8"
+WITHDRAWREWARD = b"\xd9"
+FREEZEBALANCEV2 = b"\xda"
+UNFREEZEBALANCEV2 = b"\xdb"
+CANCELALLUNFREEZEV2 = b"\xdc"
+WITHDRAWEXPIREUNFREEZE = b"\xdd"
+DELEGATERESOURCE = b"\xde"
+UNDELEGATERESOURCE = b"\xdf"
+
+_tvm_info = {
+    CALLTOKEN: InstructionInfo("CALLTOKEN", 8, 1, 8),
+    TOKENBALANCE: InstructionInfo("TOKENBALANCE", 2, 1, 2),
+    CALLTOKENVALUE: InstructionInfo("CALLTOKENVALUE", 0, 1, 0),
+    CALLTOKENID: InstructionInfo("CALLTOKENID", 0, 1, 0),
+    ISCONTRACT: InstructionInfo("ISCONTRACT", 1, 1, 1),
+    FREEZE: InstructionInfo("FREEZE", 3, 1, 3),
+    UNFREEZE: InstructionInfo("UNFREEZE", 2, 1, 2),
+    FREEZEEXPIRETIME: InstructionInfo("FREEZEEXPIRETIME", 2, 1, 2),
+    VOTEWITNESS: InstructionInfo("VOTEWITNESS", 4, 1, 4),
+    WITHDRAWREWARD: InstructionInfo("WITHDRAWREWARD", 0, 1, 0),
+    FREEZEBALANCEV2: InstructionInfo("FREEZEBALANCEV2", 2, 1, 2),
+    UNFREEZEBALANCEV2: InstructionInfo("UNFREEZEBALANCEV2", 2, 1, 2),
+    CANCELALLUNFREEZEV2: InstructionInfo("CANCELALLUNFREEZEV2", 0, 1, 0),
+    WITHDRAWEXPIREUNFREEZE: InstructionInfo("WITHDRAWEXPIREUNFREEZE", 0, 1, 0),
+    DELEGATERESOURCE: InstructionInfo("DELEGATERESOURCE", 3, 1, 3),
+    UNDELEGATERESOURCE: InstructionInfo("UNDELEGATERESOURCE", 3, 1, 3),
+}
+
 CREATE = _define("CREATE", b"\xf0", 3, 1)
 CALL = _define("CALL", b"\xf1", 7, 1)
 CALLCODE = _define("CALLCODE", b"\xf2", 7, 1)
@@ -185,7 +225,41 @@ REVERT = _define("REVERT", b"\xfd", 2, 0)
 INVALID = _define("INVALID", b"\xfe", 0, 0)
 SELFDESTRUCT = _define("SELFDESTRUCT", b"\xff", 1, 0)
 
+_by_name = {info.name: opcode for opcode, info in _info.items()}
 INFO = MappingProxyType(_info)
-BY_VALUE = tuple(INFO.get(bytes([value])) for value in range(256))
-BY_NAME = MappingProxyType({info.name: opcode for opcode, info in INFO.items()})
-del _info, _define
+BY_VALUE = [INFO.get(bytes([value])) for value in range(256)]
+BY_NAME = MappingProxyType(_by_name)
+TVM_OPCODES_ENABLED = False
+
+
+def set_tvm_opcodes_enabled(enabled: bool) -> None:
+    """Activate or deactivate TRON TVM opcodes in the shared lookup tables.
+
+    Configure the dialect before starting analysis; changing it concurrently
+    with analysis in another thread is unsupported. Opcode byte constants remain
+    available while disabled, but their lookup entries become undefined.
+    """
+    if type(enabled) is not bool:
+        raise TypeError("enabled must be a boolean")
+    global TVM_OPCODES_ENABLED
+    if enabled == TVM_OPCODES_ENABLED:
+        return
+    if enabled:
+        _info.update(_tvm_info)
+        _by_name.update((info.name, opcode) for opcode, info in _tvm_info.items())
+    else:
+        for opcode, info in _tvm_info.items():
+            _info.pop(opcode, None)
+            _by_name.pop(info.name, None)
+    for opcode in _tvm_info:
+        BY_VALUE[opcode[0]] = _info.get(opcode)
+    TVM_OPCODES_ENABLED = enabled
+
+
+def tvm_opcodes_enabled() -> bool:
+    """Return whether TRON TVM opcode extensions are active."""
+    return TVM_OPCODES_ENABLED
+
+
+set_tvm_opcodes_enabled(True)
+del _define

@@ -4,6 +4,7 @@
 
 ```python
 compatible(code1: bytes, code2: bytes, *, allow_reuse: bool = True,
+           ignore_constructor_args: bool = False,
            trace: Callable[[dict], None] | None = None) -> bool
 ```
 
@@ -14,10 +15,22 @@ program origin may correspond to several origins on the other side; `False`
 requires a global one-to-one correspondence. `trace` receives property,
 program-pair, structural, and final-decision events.
 
+With `ignore_constructor_args=True`, the entire trailing constructor-argument
+area is omitted from comparison. Every program originating in that area, and
+all programs descended from it, are removed from both structural graphs. The
+default is `False`. This is useful for comparing actual deployment initcode,
+which has appended constructor arguments, with argument-free compiler output.
+
 The result is true when the sectioned program structures admit a correspondence
 and no compared behavior establishes a contradiction. Unknown observations are
 compatible, so this is a conservative compatibility check rather than proof of
 semantic equivalence.
+
+Child programs are tried in section order. The existence check first searches
+for a one-to-one correspondence and stops at the first complete match. With
+`allow_reuse=True`, one-to-many and many-to-one coverage is considered only
+after every one-to-one correspondence has failed. `code_mappings` can be used
+when the alternative correspondences themselves are needed.
 
 ## Examples
 

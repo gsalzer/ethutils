@@ -1,8 +1,98 @@
 import unittest
 import cbor2
-from ethutils.sectioning import Analyzer, CreatedEvidence, ReturnEvidence, section, _constant
+from ethutils import opcodes
+from ethutils.sectioning import (Analyzer, CreatedEvidence, ReturnEvidence,
+                                 analyze_sections, decompose, runtime, section,
+                                 _abi_byte_candidates, _constant)
+from tests.helpers import Assembly, hex_fixture
 
 class SectionTests(unittest.TestCase):
+    def test_abi_byte_candidates_require_canonical_bounds_and_padding(self):
+        payload=bytes.fromhex('600556005b00')
+        encoded=(32).to_bytes(32,'big')+len(payload).to_bytes(32,'big')
+        encoded+=payload+b'\x00'*(-len(payload)%32)
+        self.assertEqual(_abi_byte_candidates(encoded), [(0,32,64,70)])
+        self.assertEqual(_abi_byte_candidates(encoded[:-1]+b'\x01'), [])
+        self.assertEqual(_abi_byte_candidates(encoded[:32]+(99).to_bytes(32,'big')+encoded[64:]), [])
+
+    def test_abi_bytes_seed_init_and_returned_runtime_detection(self):
+        embedded_runtime=bytes.fromhex('5f5ffd')
+        init=bytes([0x60,len(embedded_runtime)])+bytes.fromhex('600c600039')
+        init+=bytes([0x60,len(embedded_runtime)])+bytes.fromhex('6000f3')+embedded_runtime
+        tail=(32).to_bytes(32,'big')+len(init).to_bytes(32,'big')
+        tail+=init+b'\x00'*(-len(init)%32)
+        # Copy the complete ABI tail as constructor data, then return a one-byte
+        # outer runtime. The ABI payload begins at absolute input offset 84.
+        prefix=bytes.fromhex(
+            f'61{len(tail):04x}6100145f3960016100135f3960015ff3')
+        code=prefix+opcodes.STOP+tail
+        analyzer=Analyzer(code);parts=analyzer.run()
+        init_start=20+64;runtime_start=init_start+12
+        self.assertIn(init_start,analyzer.abi_programs)
+        self.assertIn(ReturnEvidence(init_start,runtime_start,runtime_start+len(embedded_runtime),
+                                     init_start+11,init_start+6),
+                      analyzer.returned_copies)
+        self.assertIn(dict(kind='code',start=init_start,end=runtime_start,
+                           origin=init_start),parts)
+        self.assertIn(dict(kind='code',start=runtime_start,
+                           end=runtime_start+len(embedded_runtime),origin=runtime_start),parts)
+        self.assertEqual(sum(kind=='code' for kind,_ in decompose(code)),4)
+        self.assertEqual(runtime(code),opcodes.STOP)
+        program=next(p for p in analyze_sections(code).programs
+                     if p.origin==init_start)
+        self.assertEqual((program.evidence,program.parent),('abi_bytes',0))
+
+    def test_tvm_stack_producers_keep_runtime_code_contiguous(self):
+        code = opcodes.CALLTOKENVALUE + opcodes.POP + opcodes.CALLTOKENID + opcodes.POP + opcodes.STOP
+        self.assertEqual(section(code), [dict(kind='code', start=0, end=5, origin=0)])
+        try:
+            opcodes.set_tvm_opcodes_enabled(False)
+            self.assertNotEqual(section(code), [dict(kind='code', start=0, end=5, origin=0)])
+        finally:
+            opcodes.set_tvm_opcodes_enabled(True)
+
+    def test_nested_creation_contract_fixtures(self):
+        expected = {
+            '0xa39394d3447c1dbd386b92b4d1fcc22ca85eae67-src.hex': [
+                ('code', 0, 472, 0), ('code', 472, 1175, 472),
+                ('data', 472, 10147, 0), ('code', 1175, 3744, 1175),
+                ('data', 1175, 3776, 472), ('data', 3744, 3776, 1175),
+                ('code', 3776, 4479, 3776),
+                ('code', 4479, 7048, 4479), ('data', 4479, 7080, 3776),
+                ('data', 7048, 7080, 4479), ('code', 7080, 10147, 7080),
+            ],
+            '0xa39394d3447c1dbd386b92b4d1fcc22ca85eae67.hex': [
+                ('code', 0, 724, 0), ('code', 724, 1421, 724),
+                ('data', 724, 9879, 0), ('code', 1421, 3733, 1421),
+                ('data', 1421, 3765, 724), ('data', 3733, 3765, 1421),
+                ('code', 3765, 4462, 3765),
+                ('code', 4462, 6774, 4462), ('data', 4462, 6806, 3765),
+                ('data', 6774, 6806, 4462), ('code', 6806, 9879, 6806),
+            ],
+        }
+        for name, ranges in expected.items():
+            with self.subTest(fixture=name):
+                parts = section(hex_fixture(name))
+                actual = [(part['kind'], part['start'], part['end'], part['origin'])
+                          for part in parts if part['kind'] in {'code', 'data'}]
+                self.assertEqual(actual, ranges)
+                returned = [(part['start'], part['end'], part['origin'],
+                             part['via'], part['copy'])
+                            for part in parts if part['kind'] == 'returned']
+                expected_returned = {
+                    '0xa39394d3447c1dbd386b92b4d1fcc22ca85eae67-src.hex': [
+                        (1175, 3776, 472, 1174, 1171),
+                        (4479, 7080, 3776, 4478, 4475),
+                        (7080, 10147, 0, 471, 468),
+                    ],
+                    '0xa39394d3447c1dbd386b92b4d1fcc22ca85eae67.hex': [
+                        (1421, 3765, 724, 1420, 1417),
+                        (4462, 6806, 3765, 4461, 4458),
+                        (6806, 9879, 0, 723, 720),
+                    ],
+                }
+                self.assertEqual(returned, expected_returned[name])
+
     def test_push_data_not_jumpdest(self):
         r = Analyzer(bytes.fromhex('615b00600156')).explore(0,0)
         self.assertEqual(r.invalid_jump_targets, {1})
@@ -104,6 +194,36 @@ class SectionTests(unittest.TestCase):
                          {CreatedEvidence(0,15,16,13,6)})
         self.assertIn(dict(kind='code',start=15,end=16,origin=15),parts)
         self.assertIn(dict(kind='data',start=15,end=16,origin=0),parts)
+    def test_copied_create_prefix_with_appended_arguments_is_a_program(self):
+        # Copy one byte of init code, append one constructor-argument byte, and
+        # pass both to CREATE.  Only the unchanged copied prefix has source
+        # provenance, but it is sufficient to establish the embedded program.
+        code=bytes.fromhex('600160115f3960aa60015360025f5ff00000')
+        analyzer=Analyzer(code)
+        parts=analyzer.run()
+        self.assertEqual(analyzer.created_copies,
+                         {CreatedEvidence(0,17,18,15,5)})
+        self.assertIn(dict(kind='code',start=17,end=18,origin=17),parts)
+        self.assertIn(dict(kind='data',start=17,end=18,origin=0),parts)
+    def test_create_prefix_resolves_solidity_free_memory_pointer(self):
+        # Solidity obtains both the CODECOPY destination and CREATE offset by
+        # loading the constant free-memory pointer stored at memory address 0x40.
+        code=bytes.fromhex('60606040526001601a6040513960aa60615360026040515ff00000')
+        analyzer=Analyzer(code)
+        parts=analyzer.run()
+        self.assertEqual(analyzer.created_copies,
+                         {CreatedEvidence(0,26,27,24,12)})
+        self.assertIn(dict(kind='code',start=26,end=27,origin=26),parts)
+    def test_created_init_prefix_discovers_its_returned_runtime(self):
+        init=bytes.fromhex('6005600c60003960056000f36003565b00')
+        # The outer constructor copies init, appends one byte, then CREATEs the
+        # composite payload.  Analysis of init must recursively find its runtime.
+        outer=bytes.fromhex('601160115f3960aa60115360125f5ff000')
+        analyzer=Analyzer(outer+init)
+        parts=analyzer.run()
+        self.assertIn(CreatedEvidence(0,17,34,15,5), analyzer.created_copies)
+        self.assertIn(ReturnEvidence(17,29,34,28,23), analyzer.returned_copies)
+        self.assertIn(dict(kind='code',start=29,end=34,origin=29),parts)
     def test_referenced_helper_can_return_to_unknown_destination(self):
         code=bytes.fromhex('6006500000005b5056')
         self.assertEqual(section(code),[
@@ -160,6 +280,71 @@ class SectionTests(unittest.TestCase):
                       '600160225f5f5f5ff4','600160225f5f5f5ffa'):
             with self.subTest(write=write):
                 self.assertFalse(self.returned_exploration(write+'60086020f3').returned_copies)
+    def test_overwritten_return_copy_still_seeds_program_detection(self):
+        # Exact return provenance is lost when the copied runtime is patched,
+        # but the CODECOPY source remains a useful candidate program origin.
+        payload=opcodes.PUSH0+opcodes.STOP
+        a=Assembly().push(len(payload)+1).target('payload').emit(
+            opcodes.PUSH0,opcodes.CODECOPY)
+        a.push(42).push(2).emit(opcodes.MSTORE8).push(len(payload)+1).emit(
+            opcodes.PUSH0,opcodes.RETURN)
+        a.label('payload').emit(payload)
+        code=a.build()
+        analyzer=Analyzer(code)
+        parts=analyzer.run()
+        self.assertFalse(analyzer.returned_copies)
+        start=a.labels['payload']
+        self.assertIn(dict(kind='code',start=start,end=len(code),origin=start),parts)
+    def test_exactly_returned_runtime_entry_is_trusted(self):
+        # Both selector branches deliberately jump to non-JUMPDEST offset zero
+        # to trigger an exceptional halt, and the final dynamic jump cannot be
+        # resolved statically.  Exact constructor-return provenance still
+        # establishes the deployed program entry.
+        code=bytes.fromhex(
+            '606060405260258060116000396000f300'
+            '606060405260e060020a600035046360fe47b18114600057'
+            '80636d4ce63c146000575b9056')
+        parts=section(code)
+        self.assertIn(dict(kind='code',start=17,end=54,origin=17),parts)
+        self.assertIn(dict(kind='returned',start=17,end=54,origin=0,
+                           via=15,copy=12),parts)
+    def test_create_discovers_copy_from_internal_memory_helper(self):
+        payload=opcodes.PUSH0+opcodes.PUSH0+opcodes.RETURN
+        a=Assembly().target('after').target('helper').emit(opcodes.JUMP)
+        copied_length=len(payload)+1  # payload label contributes its JUMPDEST
+        a.label('after').emit(opcodes.POP).push(copied_length).emit(
+            opcodes.PUSH0,opcodes.PUSH0,opcodes.CREATE,opcodes.STOP)
+        a.label('helper').push(0x40).emit(opcodes.MLOAD).push(copied_length).emit(
+            opcodes.DUP1).target('payload').emit(opcodes.DUP4,opcodes.CODECOPY,
+                                              opcodes.ADD,opcodes.SWAP1,opcodes.JUMP)
+        a.label('payload').emit(payload)
+        code=a.build()
+        parts=section(code)
+        start=a.labels['payload']
+        self.assertIn(dict(kind='code',start=start,end=len(code),origin=start),parts)
+
+    def test_plain_codecopy_source_is_a_weak_program_reference(self):
+        # No CREATE or RETURN consumes this copy.  Its source nevertheless has
+        # independent CFG evidence and is therefore accepted as a program.
+        a=Assembly().push(7).target('payload').emit(
+            opcodes.PUSH0,opcodes.CODECOPY,opcodes.STOP)
+        a.label('payload').emit(bytes.fromhex('600556005b00'))
+        code=a.build();start=a.labels['payload']
+        parts=section(code)
+        self.assertIn(start, {part['origin'] for part in parts if part['kind']=='code'})
+        self.assertTrue(any(part['kind']=='code' and part['start']==start
+                            for part in parts))
+
+    def test_plain_codecopy_reference_alone_does_not_make_data_code(self):
+        # A clean-looking copied fragment without jumps or nested program flow
+        # remains data; the CODECOPY reference is supporting, not conclusive.
+        a=Assembly().push(4).target('payload').emit(
+            opcodes.PUSH0,opcodes.CODECOPY,opcodes.STOP)
+        a.label('payload').emit(opcodes.PUSH0,opcodes.PUSH0,opcodes.REVERT)
+        code=a.build();start=a.labels['payload']
+        parts=section(code)
+        self.assertFalse(any(part['kind']=='code' and part['origin']==start
+                             for part in parts))
     def test_nonoverlapping_write_preserves_returned(self):
         self.assertTrue(self.returned_exploration('5f60405260086020f3').returned_copies)
     def test_partial_overwrite_preserves_unaffected_subrange(self):
@@ -176,6 +361,8 @@ class SectionTests(unittest.TestCase):
         code=bytes.fromhex('34600c5760086080602039005b60086020f3')
         code+=b'\x00'*(128-len(code))+bytes(range(8))
         self.assertFalse(Analyzer(code).explore(0,0).returned_copies)
+        analyzer=Analyzer(code);analyzer.run()
+        self.assertNotIn(128,analyzer.accepted)
     def test_same_stack_different_memory_at_join(self):
         # One branch overwrites byte 34. Both reach the same RETURN with
         # identical stacks; the other branch still has valid provenance.
@@ -319,16 +506,16 @@ class SectionTests(unittest.TestCase):
         self.assertFalse(a.region(0, len(prefix)))
         self.assertEqual(a.bad_targets[0], {254, 255})
 
-    def test_rejected_returned_entry_retains_program_coordinates(self):
+    def test_trusted_returned_entry_retains_bad_target_diagnostics(self):
         runtime = bytes.fromhex('3460ff573460fe575f5ffd5b5f5ffd')
         header = bytes([0x60, len(runtime)]) + bytes.fromhex('600c600039')
         header += bytes([0x60, len(runtime)]) + bytes.fromhex('6000f3')
         a = Analyzer(header + runtime)
         parts = a.run()
         entry = next(d for d in a.diagnostics if d['origin']==12 and d['start']==12)
-        self.assertFalse(entry['accepted'])
+        self.assertTrue(entry['accepted'])
         self.assertEqual(entry['B'], [266, 267])
-        self.assertIn(dict(kind='code',start=23,end=27,origin=12), parts)
+        self.assertIn(dict(kind='code',start=12,end=27,origin=12), parts)
         self.assertEqual(set(a.accepted), {0,12})
 
     def test_bad_jump_diagnostics_identify_literal_and_stack(self):
@@ -370,24 +557,32 @@ class SectionTests(unittest.TestCase):
         self.assertTrue(any(s['kind']=='data' and s['start']==20 and s['end']==len(code)
                             for s in parts))
 
-    def test_returned_block_recovery_does_not_follow_other_blocks_failures(self):
-        # The first block has a valid conditional edge. Its successor has two
-        # distinct bad targets. Recover the first without trusting the successor.
+    def test_trusted_returned_entry_follows_reachable_blocks(self):
         runtime=bytes.fromhex('34600557005b3460ff573460fe575f5ffd')
         header=bytes([0x60,len(runtime)])+bytes.fromhex('600c600039')
         header+=bytes([0x60,len(runtime)])+bytes.fromhex('6000f3')
         a=Analyzer(header+runtime);parts=a.run()
         self.assertTrue(any(s['kind']=='code' and s['origin']==12 and s['start']==12 for s in parts))
         self.assertNotIn(17,a.accepted)  # internal block is not a fresh origin
-        self.assertTrue(any(d['recovery']=='basic_block' and d['accepted'] for d in a.diagnostics))
+        self.assertTrue(any(d['origin']==12 and d['start']==12 and d['recovery'] is None
+                            and d['accepted'] for d in a.diagnostics))
 
-    def test_block_recovery_still_rejects_invalid_and_truncated_instructions(self):
-        for suffix in ('aa','61ff'):
-            runtime=bytes.fromhex(suffix)
-            header=bytes([0x60,len(runtime)])+bytes.fromhex('600c600039')
-            header+=bytes([0x60,len(runtime)])+bytes.fromhex('6000f3')
-            a=Analyzer(header+runtime);a.run()
-            self.assertNotIn(12,a.accepted)
+    def test_copied_image_extent_does_not_limit_control_flow_exploration(self):
+        # The short copied extent is useful to interpret CODESIZE, but reachable
+        # code beyond it must still be found. Relative address 7 is absolute 11.
+        code=bytes.fromhex('000000006007565b005b005b00')
+        a=Analyzer(code);a.limits[4]=10;a.program_regions[4]=10
+        self.assertTrue(a.region(4,4,trusted=True))
+        self.assertIn((11,12),a.accepted[4])
+
+    def test_trusted_return_accepts_undefined_but_not_empty_truncated_entry(self):
+        for suffix,accepted in (('aa',True),('61ff',False)):
+            with self.subTest(suffix=suffix):
+                runtime=bytes.fromhex(suffix)
+                header=bytes([0x60,len(runtime)])+bytes.fromhex('600c600039')
+                header+=bytes([0x60,len(runtime)])+bytes.fromhex('6000f3')
+                a=Analyzer(header+runtime);a.run()
+                self.assertEqual(12 in a.accepted,accepted)
 
     def test_referenced_constructor_block_can_overlap_a_returned_program(self):
         code=bytearray(b'\xaa'*13);code[0]=0

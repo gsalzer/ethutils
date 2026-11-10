@@ -82,21 +82,24 @@ class RuntimeTests(unittest.TestCase):
                             for part in sectioning.section(code)))
         self.assertEqual(ethutils.runtime(code), payload)
 
-    def test_missing_returns_or_unrecognized_runtime_entry(self):
-        for code in (b'', op.STOP, creation(b'\xaa'), creation(b'')):
+    def test_missing_or_empty_returns(self):
+        for code in (b'', op.STOP, creation(b'')):
             with self.subTest(code=code.hex()):
                 self.assertIsNone(ethutils.runtime(code))
 
-    def test_internal_code_alone_does_not_establish_runtime_entry(self):
+    def test_exactly_returned_undefined_opcode_is_runtime(self):
+        self.assertEqual(ethutils.runtime(creation(b'\xaa')), b'\xaa')
+
+    def test_exact_return_establishes_runtime_entry_despite_bad_targets(self):
         payload = bytes.fromhex('3460ff573460fe575f5ffd5b5f5ffd')
         code = creation(payload)
         sections = sectioning.section(code)
         returned = next(part for part in sections if part['kind'] == 'returned' and part['origin'] == 0)
         self.assertTrue(any(part['kind'] == 'code' and part['origin'] == returned['start']
                             for part in sections))
-        self.assertFalse(any(part['kind'] == 'code' and part['start'] == part['origin'] == returned['start']
-                             for part in sections))
-        self.assertIsNone(ethutils.runtime(code))
+        self.assertTrue(any(part['kind'] == 'code' and part['start'] == part['origin'] == returned['start']
+                            for part in sections))
+        self.assertEqual(ethutils.runtime(code), payload)
 
     def test_patched_return_has_insufficient_evidence(self):
         self.assertIsNone(ethutils.runtime(creation(op.STOP, patch_byte=True)))

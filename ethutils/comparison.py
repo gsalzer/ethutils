@@ -70,7 +70,7 @@ class _Graph:
         return {node: tuple(values) for node, values in children.items()}, shapes
 
 
-def _graph(bytecode):
+def _graph(bytecode, ignore_constructor_args=False):
     """Group code by origin and retain immediate copy/return relationships.
 
     Individual sectioning records identify the program beginning at each copied
@@ -92,16 +92,61 @@ def _graph(bytecode):
 
     edges = {(record.parent, record.start): _DATA for record in analyzer.copied_regions
              if covers(record.parent, record.start, record.end)}
+    # ABI decoding finds a program inside a broader copied data range, so there
+    # is no ProgramRange beginning at the payload itself. Retain the immediate
+    # data-parent relation explicitly instead of making the embedded program a
+    # detached component of the comparison graph.
+    edges.update({(record.parent, record.start): _DATA
+                  for record in getattr(analyzer, 'abi_programs', {}).values()
+                  if covers(record.parent, record.start, record.end)})
     edges.update({(record.origin, record.start): _RETURNED for record in analyzer.returned_copies
                   if covers(record.origin, record.start, record.end)})
+    def argument_tail(origin):
+        """Return the copied trailing-data boundary after origin's returned image."""
+        candidates = [part['start'] for part in sections
+                      if part.get('origin') == origin
+                      and part.get('role') == 'constructor_arguments_candidate']
+        returned_end = max((record.end for record in analyzer.returned_copies
+                            if record.origin == origin), default=None)
+        if returned_end is not None:
+            candidates.extend(
+                record.start for record in getattr(analyzer, 'copy_evidence', ())
+                if record.origin == origin and record.start >= returned_end
+                and not any(a < record.end and record.start < b
+                            for a, b in ranges.get(origin, ())))
+        return min(candidates, default=None)
+
+    constructor_tail = argument_tail(0)
+    excluded = set()
+    if ignore_constructor_args and constructor_tail is not None:
+        # Ignore every program image physically contained in the initial
+        # constructor's trailing arguments, irrespective of how it was found.
+        excluded.update(origin for origin in ranges if origin >= constructor_tail)
+        while True:
+            descendants = {child for (parent, child) in edges if parent in excluded}
+            if descendants <= excluded:
+                break
+            excluded.update(descendants)
+        edges = {(parent, child): kind for (parent, child), kind in edges.items()
+                 if parent not in excluded and child not in excluded}
     limits = getattr(analyzer, 'limits', {})
     image_ends = {origin: limits.get(origin, len(bytecode)) for origin in ranges}
     for part in sections:
         if part.get('role') == 'constructor_arguments_candidate' and part.get('origin') in image_ends:
             origin = part['origin']
             image_ends[origin] = min(image_ends[origin], part['start'])
-    images = {origin: bytecode[origin:image_ends[origin]] for origin in ranges}
-    return _Graph(tuple(sorted(ranges)), edges, images)
+    # An embedded ABI program overlaps its enclosing data record, which keeps
+    # that record from receiving the constructor_arguments_candidate role.
+    # Recover the same boundary from the parent's own return/copy evidence.
+    # Child-program code does not make constructor arguments part of the
+    # parent's image; only code accepted under the parent origin prevents trim.
+    for origin in image_ends:
+        tail = argument_tail(origin)
+        if tail is not None:
+            image_ends[origin] = min(image_ends[origin], tail)
+    images = {origin: bytecode[origin:image_ends[origin]] for origin in ranges
+              if origin not in excluded}
+    return _Graph(tuple(sorted(set(ranges) - excluded)), edges, images)
 
 
 def _minimal_covers(left, right, edges, allow_reuse=True):
@@ -170,8 +215,73 @@ class _Comparison:
         self.children1, self.shapes1 = first.prepare(allow_reuse)
         self.children2, self.shapes2 = second.prepare(allow_reuse)
         self.feasible = {}
+        self.existence = {}
+        self.program_feasible = {}
         self.child_graphs = {}
         self.rooted = (not first.origins or 0 in first.origins) and (not second.origins or 0 in second.origins)
+
+    def _program_possible(self, a, b):
+        """Check one physical program pair once across existence and enumeration."""
+        pair = (a, b)
+        if pair not in self.program_feasible:
+            answer = self.programs_compatible(a, b)
+            if not isinstance(answer, bool):
+                raise TypeError('programs_compatible must return a boolean')
+            self.program_feasible[pair] = answer
+        return self.program_feasible[pair]
+
+    def _ordered_bijection(self, left, right, index=0, used=frozenset()):
+        """Try ordered one-to-one child assignments, evaluating pairs only as needed."""
+        if index == len(left):
+            return True
+        child, kind = left[index]
+        for partner, other_kind in right:
+            if (partner not in used and kind == other_kind
+                    and self.lazy_possible(child, partner)
+                    and self._ordered_bijection(left, right, index+1, used | {partner})):
+                return True
+        return False
+
+    def _reuse_cover_exists(self, left, right):
+        """Check lazily that every child has a partner when partners may be reused."""
+        for child, kind in left:
+            if not any(kind == other_kind and self.lazy_possible(child, partner)
+                       for partner, other_kind in right):
+                return False
+        for partner, kind in right:
+            if not any(kind == other_kind and self.lazy_possible(child, partner)
+                       for child, other_kind in left):
+                return False
+        return True
+
+    def lazy_possible(self, a, b):
+        """Check subtree existence, preferring an ordered bijection before reuse."""
+        pair = (a, b)
+        if pair in self.existence:
+            return self.existence[pair]
+        if not self.rooted or self.shapes1[a] != self.shapes2[b]:
+            self.emit('structural_pair', origin1=None if a == _ROOT else a,
+                      origin2=None if b == _ROOT else b, compatible=False,
+                      reason='missing_root' if not self.rooted else 'subtree_shape')
+            self.existence[pair] = False
+            return False
+        if a != _ROOT:
+            if not self._program_possible(a, b):
+                self.existence[pair] = False
+                return False
+        left, right = self.children1[a], self.children2[b]
+        answer = (len(left) == len(right)
+                  and self._ordered_bijection(left, right))
+        reason = 'ordered_bijection'
+        if not answer and self.allow_reuse:
+            answer = self._reuse_cover_exists(left, right)
+            reason = 'children_covered' if answer else 'children_without_cover'
+        elif not answer:
+            reason = 'children_without_cover'
+        self.emit('structural_pair', origin1=None if a == _ROOT else a,
+                  origin2=None if b == _ROOT else b, compatible=answer, reason=reason)
+        self.existence[pair] = answer
+        return answer
 
     def possible(self, a, b):
         """Check the code pair and require a partner for every child on both sides."""
@@ -185,10 +295,7 @@ class _Comparison:
             self.feasible[pair] = False
             return False
         if a != _ROOT:
-            answer = self.programs_compatible(a, b)
-            if not isinstance(answer, bool):
-                raise TypeError('programs_compatible must return a boolean')
-            if not answer:
+            if not self._program_possible(a, b):
                 self.feasible[pair] = False
                 return False
         left, right = self.children1[a], self.children2[b]
@@ -245,7 +352,7 @@ class _Comparison:
         if not self.allow_reuse:
             # Shared physical nodes can impose additional global bijection constraints.
             return next(self.mappings(), None) is not None
-        return self.possible(_ROOT, _ROOT)
+        return self.lazy_possible(_ROOT, _ROOT)
 
 
 _FUNCTION_PROPERTIES = (
@@ -340,14 +447,18 @@ def properties_compatible(first, second, *, trace: TraceCallback | None = None,
     return _routes_compatible(first.routes, second.routes, emit, context)
 
 
-def _comparison(bytecode1, bytecode2, allow_reuse, trace=None):
+def _comparison(bytecode1, bytecode2, allow_reuse,
+                ignore_constructor_args=False, trace=None):
     require_bytes(bytecode1)
     require_bytes(bytecode2)
     if not isinstance(allow_reuse, bool):
         raise TypeError('allow_reuse must be a boolean')
+    if not isinstance(ignore_constructor_args, bool):
+        raise TypeError('ignore_constructor_args must be a boolean')
     emit = _emitter(trace)
 
-    graph1, graph2 = _graph(bytecode1), _graph(bytecode2)
+    graph1 = _graph(bytecode1, ignore_constructor_args)
+    graph2 = _graph(bytecode2, ignore_constructor_args)
     property_cache = {}
 
     def program_properties(graph, origin):
@@ -369,6 +480,7 @@ def _comparison(bytecode1, bytecode2, allow_reuse, trace=None):
 
 def code_mappings(bytecode1: bytes, bytecode2: bytes, *,
                   allow_reuse: bool = True,
+                  ignore_constructor_args: bool = False,
                   trace: TraceCallback | None = None) -> Iterator[CodeMapping]:
     """Yield recursive correspondences as tuples of (origin1, origin2) pairs.
 
@@ -386,9 +498,12 @@ def code_mappings(bytecode1: bytes, bytecode2: bytes, *,
     Shared physical children are compared in each parent context; duplicate
     projected results are yielded once. Cyclic program relationships raise
     ValueError. Empty inputs yield (). trace receives structured records as the
-    returned iterator is consumed.
+    returned iterator is consumed. ignore_constructor_args=True removes every
+    program in the initial constructor's trailing argument data, together with
+    its descendants, from both program graphs.
     """
-    comparison = _comparison(bytecode1, bytecode2, allow_reuse, trace)
+    comparison = _comparison(bytecode1, bytecode2, allow_reuse,
+                             ignore_constructor_args, trace)
     emit = _emitter(trace)
 
     def traced_mappings():
@@ -399,6 +514,7 @@ def code_mappings(bytecode1: bytes, bytecode2: bytes, *,
 
 
 def compatible(runtime1: bytes, runtime2: bytes, *, allow_reuse: bool = True,
+               ignore_constructor_args: bool = False,
                trace: TraceCallback | None = None) -> bool:
     """Decide whether some recursively compatible program correspondence exists.
 
@@ -412,7 +528,11 @@ def compatible(runtime1: bytes, runtime2: bytes, *, allow_reuse: bool = True,
     pair remains eligible. Cyclic copy/return relationships raise ValueError, as
     their unfolding has infinite depth. trace receives structured records for
     property checks, program pairs and the overall decision.
+    ignore_constructor_args=True excludes the initial constructor's complete
+    trailing argument area, including every program in it and its descendants,
+    from structural comparison.
     """
-    answer = _comparison(runtime1, runtime2, allow_reuse, trace).exists()
+    answer = _comparison(runtime1, runtime2, allow_reuse,
+                         ignore_constructor_args, trace).exists()
     _emitter(trace)('overall_result', compatible=answer)
     return answer

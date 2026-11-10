@@ -10,6 +10,7 @@ import cbor2
 import ethutils as evm
 from ethutils import comparison as c, opcodes as op
 from ethutils.sectioning import ProgramRange, ReturnEvidence
+from tests.helpers import hex_fixture
 from tests.test_runtime import creation, conditional_creation
 
 
@@ -96,6 +97,18 @@ class GraphTests(unittest.TestCase):
             result = c._graph(bytes(range(40)))
         self.assertEqual(result.images[0], bytes(range(30)))
         self.assertEqual(result.images[20], bytes(range(20, 40)))
+
+    def test_ignoring_constructor_args_removes_every_program_in_tail(self):
+        sections = [dict(kind='code', origin=0, start=0, end=5),
+                    dict(kind='code', origin=20, start=20, end=25),
+                    dict(kind='data', origin=0, start=30, end=40,
+                         role='constructor_arguments_candidate'),
+                    dict(kind='code', origin=35, start=35, end=40)]
+        with self.scan(sections, [(0, 20, 30), (0, 35, 40)], [(0, 20, 30)]):
+            result = c._graph(bytes(range(40)), ignore_constructor_args=True)
+        self.assertEqual(result.origins, (0, 20))
+        self.assertEqual(result.edges, {(0, 20): c._RETURNED})
+        self.assertEqual(result.images[0], bytes(range(30)))
 
     def test_cycles_are_reported_instead_of_recursing(self):
         for g in (graph((0,), data=[(0, 0)]), graph((0, 1), data=[(0, 1), (1, 0)])):
@@ -201,7 +214,11 @@ class SubtreeTests(unittest.TestCase):
         self.assertEqual(sum(call.args == (3, 30) for call in calls), 1)
         self.assertEqual(len(calls), len({call.args for call in calls}))
         self.assertEqual(len(list(comparison.mappings())), 2)
-        self.assertEqual(checker.call_args_list, calls)
+        self.assertTrue({call.args for call in calls}
+                        <= {call.args for call in checker.call_args_list})
+        self.assertEqual(sum(call.args == (3, 30) for call in checker.call_args_list), 1)
+        self.assertEqual(len(checker.call_args_list),
+                         len({call.args for call in checker.call_args_list}))
 
     def test_global_bijection_is_preserved_when_shared_graphs_have_equal_node_counts(self):
         first = graph((0, 1, 2, 3, 4), data=[(0, 1), (0, 2)],
@@ -256,6 +273,17 @@ class SubtreeTests(unittest.TestCase):
 
 
 class CompatibleTests(unittest.TestCase):
+    def test_nested_creation_contract_compatibility(self):
+        source = hex_fixture('0xa39394d3447c1dbd386b92b4d1fcc22ca85eae67-src.hex')
+        deployed = hex_fixture('0xa39394d3447c1dbd386b92b4d1fcc22ca85eae67.hex')
+        events = []
+        self.assertTrue(c.compatible(deployed, deployed, trace=events.append))
+        self.assertEqual([(event['origin1'], event['origin2']) for event in events
+                          if event['kind'] == 'program_pair'],
+                         [(0, 0), (724, 724), (1421, 1421),
+                          (3765, 3765), (4462, 4462), (6806, 6806)])
+        self.assertFalse(c.compatible(deployed, source))
+
     def test_public_exports_and_one_sectioning_pass_per_input(self):
         code = creation(op.STOP)
         self.assertIs(evm.compatible, c.compatible)
@@ -307,8 +335,17 @@ class CompatibleTests(unittest.TestCase):
               patch.object(c.analysis, 'properties', side_effect=analyze),
               patch.object(c, 'properties_compatible', side_effect=check)):
             self.assertTrue(c.compatible(b'left', b'right'))
-        self.assertEqual(analyzed, [b'L0', b'R0', b'L1', b'R10', b'R20', b'L2'])
+        self.assertEqual(analyzed, [b'L0', b'R0', b'L1', b'R10', b'L2', b'R20'])
         self.assertEqual(len(checked), len(set(checked)))
+
+    def test_compatible_prefers_ordered_bijection_without_cross_pairs(self):
+        first = graph((0, 1, 2), data=[(0, 1), (0, 2)])
+        second = graph((0, 10, 20), data=[(0, 10), (0, 20)])
+        checked = []
+        comparison = c._Comparison(first, second, True,
+                                   lambda a, b: not checked.append((a, b)))
+        self.assertTrue(comparison.exists())
+        self.assertEqual(checked, [(0, 0), (1, 10), (2, 20)])
 
     def test_identical_images_share_property_analysis_across_inputs(self):
         first, second = graph((0,)), graph((0,))
@@ -395,6 +432,34 @@ class CompatibleTests(unittest.TestCase):
         self.assertTrue(c.compatible(shared, duplicated))
         self.assertFalse(c.compatible(duplicated, shared, allow_reuse=False))
 
+    def test_abi_programs_are_data_children_not_detached_roots(self):
+        runtime=bytes.fromhex('5f5ffd')
+        init=bytes([0x60,len(runtime)])+bytes.fromhex('600c600039')
+        init+=bytes([0x60,len(runtime)])+bytes.fromhex('6000f3')+runtime
+        tail=(32).to_bytes(32,'big')+len(init).to_bytes(32,'big')
+        tail+=init+b'\x00'*(-len(init)%32)
+        prefix=bytes.fromhex(
+            f'61{len(tail):04x}6100145f3960016100135f3960015ff3')
+        code=prefix+op.STOP+tail
+        result=c._graph(code)
+        self.assertEqual(result.origins,(0,19,84,96))
+        self.assertEqual(result.edges,{
+            (0,19):c._RETURNED,
+            (0,84):c._DATA,
+            (84,96):c._RETURNED,
+        })
+        without_data=prefix+op.STOP
+        self.assertEqual(result.images[0],without_data)
+        self.assertFalse(c.compatible(code,without_data))
+        ignored=c._graph(code,ignore_constructor_args=True)
+        self.assertEqual((ignored.origins,ignored.edges),
+                         ((0,19),{(0,19):c._RETURNED}))
+        self.assertTrue(c.compatible(
+            code,without_data,ignore_constructor_args=True))
+        self.assertEqual(list(c.code_mappings(
+            code,without_data,ignore_constructor_args=True)),
+            [((0,0),(19,19))])
+
     def test_code_splitting_and_metadata_do_not_change_program_count(self):
         fragmented = bytes.fromhex('6006500000005b5056')
         blob = cbor2.dumps({'solc': b'\x00\x08\x1e'})
@@ -408,6 +473,10 @@ class CompatibleTests(unittest.TestCase):
         for a, b in [('00', b''), (b'', '00')]:
             with self.assertRaises(TypeError): c.code_mappings(a, b)
         with self.assertRaises(TypeError): c.compatible(op.STOP, op.STOP, allow_reuse=1)
+        with self.assertRaises(TypeError): c.compatible(
+            op.STOP,op.STOP,ignore_constructor_args=1)
+        with self.assertRaises(TypeError): c.code_mappings(
+            op.STOP,op.STOP,ignore_constructor_args=1)
         with self.assertRaises(TypeError): c.compatible(op.STOP, op.STOP, trace=[])
         self.assertFalse(c._Comparison(graph((1,)), graph((2,)), True).exists())
 

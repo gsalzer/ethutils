@@ -23,6 +23,24 @@ python -m pip install -e .
 
 Python 3.10 or newer is required.
 
+## EVM and TVM opcodes
+
+TRON TVM opcodes `0xd0` through `0xdf` are recognized by default in addition
+to standard EVM opcodes. Disable them before analysis when strict Ethereum EVM
+decoding is required:
+
+```python
+import ethutils
+
+ethutils.set_tvm_opcodes_enabled(False)
+ethutils.tvm_opcodes_enabled()  # False
+
+ethutils.set_tvm_opcodes_enabled(True)  # Restore the default.
+```
+
+The setting is process-wide. Configure it before starting concurrent analysis;
+changing it while another thread is analyzing bytecode is unsupported.
+
 ## Entry points
 
 ### Bytecode decoding
@@ -45,16 +63,24 @@ Python 3.10 or newer is required.
 
 ### Structural sectioning
 
-- `section` — Return overlapping code, data, returned-code, and metadata ranges.
-- `analyze_sections` — Return sections, detected program images, and structural diagnostics.
+- `section` — Return overlapping code, data, returned-code, and metadata ranges,
+  including plausible programs embedded in canonical ABI `bytes` values.
+- `analyze_sections` — Return sections, detected program images, discovery
+  evidence, and structural diagnostics.
 - `runtime` — Infer the runtime image returned by creation bytecode.
 - `decompose` — Partition bytecode into lossless code, data, metadata, and unclassified chunks.
 
 ### Program compatibility
 
-- `compatible` — Check for a structural correspondence without an established behavioral conflict.
-- `code_mappings` — Enumerate compatible correspondences between program origins.
+- `compatible` — Check for a structural correspondence without an established
+  behavioral conflict; trailing constructor arguments can optionally be ignored.
+- `code_mappings` — Enumerate compatible correspondences between program origins,
+  with the same constructor-argument option.
 - `properties_compatible` — Compare behavior summaries for established conflicts.
+
+Compatibility includes trailing constructor arguments and any programs found in
+them by default. Pass `ignore_constructor_args=True` explicitly when comparing
+actual deployment initcode with compiler-generated argument-free initcode.
 
 See [API.md](API.md) for the complete API reference, including arguments and
 return values.
@@ -70,7 +96,7 @@ python -m unittest discover -s tests -t .
 ## History
 
 - Versions up to and including 0.1.3 used regular expressions to perform
-  sectioning and selector extraction. This is _much_ faster than the symbolic
+  sectioning and selector extraction. This is faster than the symbolic
   execution approach chosen for 0.2.0 and later versions, but is less robust, as
   the expressions have to be updated when compilers generate new patterns.
 

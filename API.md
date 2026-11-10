@@ -20,6 +20,31 @@ arguments, return value, behavior, limitations, and examples.
   not change the result or increase analysis budgets.
 - Result objects with `to_dict()` return JSON-ready data: bytes and byte-valued
   dictionary keys become hexadecimal strings without an `0x` prefix.
+- TRON TVM opcodes `0xd0` through `0xdf` are enabled by default. Configure the
+  process-wide setting before starting concurrent analysis using the functions
+  below.
+
+## Opcode dialect
+
+### `set_tvm_opcodes_enabled`
+
+```python
+set_tvm_opcodes_enabled(enabled: bool) -> None
+```
+
+Enable or disable recognition of the TRON TVM opcode extensions in all shared
+opcode lookup tables. Pass `False` for strict Ethereum EVM decoding. Opcode
+byte constants remain available when recognition is disabled. Changing the
+setting concurrently with analysis in another thread is unsupported.
+
+### `tvm_opcodes_enabled`
+
+```python
+tvm_opcodes_enabled() -> bool
+```
+
+Return whether TRON TVM opcode recognition is currently enabled. The default is
+`True`.
 
 ## Bytecode decoding
 
@@ -113,7 +138,9 @@ Summarize discovered functions and non-selector call routes.
 section(code: bytes) -> list[dict]
 ```
 
-Return overlapping code, data, returned-code, and metadata ranges.
+Return overlapping code, data, returned-code, and metadata ranges. Copied data
+is also examined for canonical top-level ABI `bytes` values; payloads become
+code only when ordinary control-flow or nested-program evidence supports them.
 
 ### [`analyze_sections`](docs/analyze_sections.md)
 
@@ -121,7 +148,10 @@ Return overlapping code, data, returned-code, and metadata ranges.
 analyze_sections(code: bytes, *, trace: bool = False) -> SectionAnalysis
 ```
 
-Return sections, detected program images, and structural diagnostics.
+Return sections, detected program images, and structural diagnostics. Programs
+discovered inside ABI byte strings use `abi_bytes` evidence; their diagnostics
+identify the enclosing container, offset and length words, payload end, and
+the CODECOPY that supplied the container.
 
 ### [`runtime`](docs/runtime.md)
 
@@ -145,21 +175,28 @@ Partition input bytes into lossless code, data, metadata, and unclassified chunk
 
 ```python
 compatible(code1: bytes, code2: bytes, *, allow_reuse: bool = True,
+           ignore_constructor_args: bool = False,
            trace: Callable[[dict], None] | None = None) -> bool
 ```
 
 Check whether program structures correspond without an established behavioral
-contradiction.
+contradiction. The default `ignore_constructor_args=False` includes trailing
+constructor data and programs found in it; ignoring the entire argument tail is
+explicit opt-in behavior.
 
 ### [`code_mappings`](docs/code_mappings.md)
 
 ```python
 code_mappings(code1: bytes, code2: bytes, *, allow_reuse: bool = True,
+              ignore_constructor_args: bool = False,
               trace: Callable[[dict], None] | None = None
               ) -> Iterator[tuple[tuple[int, int], ...]]
 ```
 
-Lazily enumerate compatible correspondences between program origins.
+Lazily enumerate compatible correspondences between program origins. For both
+functions, `ignore_constructor_args=True` excludes the initial constructor's
+entire trailing argument area, including all programs in it and their
+descendants. Its default is `False` for both functions.
 
 ### [`properties_compatible`](docs/properties_compatible.md)
 
@@ -205,7 +242,8 @@ A mapping from selector bytes to function summaries. It also contains normalized
 
 `Fragment` maps an input range into a program image. `Program` records a detected
 program's origin, image, fragments, discovery evidence, parent, entry
-classification, and recognized code ranges.
+classification, and recognized code ranges. Discovery evidence is `entry`,
+`returned_copy`, `created_copy`, `abi_bytes`, or `fragment`.
 
 ### `SectionAnalysis`
 

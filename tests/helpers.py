@@ -1,5 +1,12 @@
 """Bytecode fixture assembly using the shared opcode definitions."""
+from pathlib import Path
+
 from ethutils import opcodes as e
+
+
+def hex_fixture(name):
+    """Load one hexadecimal bytecode fixture."""
+    return bytes.fromhex((Path(__file__).parent / 'fixtures' / 'contracts' / name).read_text())
 
 
 def properties_with_evidence(api, code, **kwargs):

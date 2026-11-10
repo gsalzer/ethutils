@@ -14,8 +14,9 @@ if TYPE_CHECKING:
     from .metadata import extract_metadata, zero_metadata
     from .normalization import normalize_pushes, skeleton
     from .models import SelectorAnalysis, PropertyAnalysis, SectionAnalysis, Program, Fragment
+    from .opcodes import set_tvm_opcodes_enabled, tvm_opcodes_enabled
 
-__version__ = '0.2.1'
+__version__ = '0.2.2'
 
 _EXPORTS = {
     'selectors': ('analysis', 'selectors'),
@@ -37,6 +38,8 @@ _EXPORTS = {
     'zero_metadata': ('metadata', 'zero_metadata'),
     'normalize_pushes': ('normalization', 'normalize_pushes'),
     'skeleton': ('normalization', 'skeleton'),
+    'set_tvm_opcodes_enabled': ('opcodes', 'set_tvm_opcodes_enabled'),
+    'tvm_opcodes_enabled': ('opcodes', 'tvm_opcodes_enabled'),
     **{name: ('models', name) for name in
        ('SelectorAnalysis', 'PropertyAnalysis', 'SectionAnalysis', 'Program', 'Fragment')},
 }

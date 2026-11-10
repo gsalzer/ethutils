@@ -18,6 +18,12 @@ Sectioning is structural inference. A reported range explains how bytes are
 used by the analyzed program and is not a proof that every possible execution
 was explored.
 
+Copied data ranges are also examined for canonical top-level ABI dynamic
+`bytes` values. Their payloads are weak program candidates: ABI structure
+supplies an entry and image extent, but normal control-flow or nested
+`CODECOPY`/`RETURN` evidence is still required before the payload is classified
+as code. Accepted embedded programs overlap the enclosing data record.
+
 ## Examples
 
 ### A simple one

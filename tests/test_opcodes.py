@@ -1,6 +1,6 @@
 import unittest
 from ethutils import opcodes as o
-from ethutils import normalize_pushes, instruction_boundaries
+from ethutils import disassemble, normalize_pushes, instruction_boundaries
 
 
 class OpcodeTests(unittest.TestCase):
@@ -33,6 +33,41 @@ class OpcodeTests(unittest.TestCase):
         self.assertEqual(normalize_pushes(o.PUSH32 + b'\x01'), o.PUSH0)
         self.assertEqual(instruction_boundaries(o.PUSH32 + b'\x01'), [0])
         self.assertEqual(instruction_boundaries(b''), [0])
+
+    def test_tvm_opcodes_are_enabled_by_default_with_official_stack_effects(self):
+        expected = {
+            o.CALLTOKEN: (8, 1), o.TOKENBALANCE: (2, 1),
+            o.CALLTOKENVALUE: (0, 1), o.CALLTOKENID: (0, 1),
+            o.ISCONTRACT: (1, 1), o.FREEZE: (3, 1),
+            o.UNFREEZE: (2, 1), o.FREEZEEXPIRETIME: (2, 1),
+            o.VOTEWITNESS: (4, 1), o.WITHDRAWREWARD: (0, 1),
+            o.FREEZEBALANCEV2: (2, 1), o.UNFREEZEBALANCEV2: (2, 1),
+            o.CANCELALLUNFREEZEV2: (0, 1), o.WITHDRAWEXPIREUNFREEZE: (0, 1),
+            o.DELEGATERESOURCE: (3, 1), o.UNDELEGATERESOURCE: (3, 1),
+        }
+        self.assertTrue(o.tvm_opcodes_enabled())
+        for opcode, stack_effect in expected.items():
+            with self.subTest(opcode=opcode.hex()):
+                info = o.INFO[opcode]
+                self.assertEqual((info.pops, info.pushes), stack_effect)
+                self.assertIs(o.BY_VALUE[opcode[0]], info)
+                self.assertEqual(o.BY_NAME[info.name], opcode)
+
+    def test_tvm_opcode_toggle_updates_existing_shared_views(self):
+        by_value = o.BY_VALUE
+        try:
+            o.set_tvm_opcodes_enabled(False)
+            self.assertFalse(o.tvm_opcodes_enabled())
+            self.assertIs(by_value, o.BY_VALUE)
+            self.assertIsNone(by_value[o.CALLTOKENVALUE[0]])
+            self.assertNotIn(o.CALLTOKENVALUE, o.INFO)
+            self.assertNotIn('CALLTOKENVALUE', o.BY_NAME)
+            self.assertIsNone(next(disassemble(o.CALLTOKENVALUE)).name)
+            with self.assertRaises(TypeError):
+                o.set_tvm_opcodes_enabled(1)
+        finally:
+            o.set_tvm_opcodes_enabled(True)
+        self.assertEqual(next(disassemble(o.CALLTOKENVALUE)).name, 'CALLTOKENVALUE')
 
 
 

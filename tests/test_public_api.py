@@ -14,6 +14,13 @@ from tests.helpers import Assembly, selector, compare
 
 
 class PublicApiTests(unittest.TestCase):
+    def test_tvm_opcode_configuration_exports(self):
+        self.assertIs(evm.set_tvm_opcodes_enabled,
+                      op.set_tvm_opcodes_enabled)
+        self.assertIs(evm.tvm_opcodes_enabled,
+                      op.tvm_opcodes_enabled)
+        self.assertTrue(evm.tvm_opcodes_enabled())
+
     def code(self):
         a = Assembly()
         selector(a); compare(a, 0x12345678, 'f')

@@ -33,6 +33,8 @@ def intervals(spans):
 MAX_BAD_TARGETS = 1
 MAX_CONTEXT_FRAGMENT = 32
 MAX_STACK_STATES = 16
+MAX_ABI_HEAD_WORDS = 256
+MAX_ABI_CANDIDATES = 32
 
 
 class _TracedConstant(int):
@@ -77,12 +79,48 @@ class MemoryCopy(NamedTuple):
     copy_pc: int
 
 
+class MemoryWord(NamedTuple):
+    """A constant 32-byte word stored in memory for later MLOAD resolution."""
+    start: int
+    end: int
+    value: int
+
+
 class CopyEvidence(NamedTuple):
     """Record which program and CODECOPY instruction copied input bytes [start, end)."""
     origin: int
     start: int
     end: int
     copy_pc: int
+
+
+class CopyFlow(NamedTuple):
+    """A constant CODECOPY mapping retained for later program-origin discovery."""
+    origin: int
+    memory_start: int
+    memory_end: int
+    source_start: int
+    source_end: int
+    copy_pc: int
+
+
+class ProgramSink(NamedTuple):
+    """A constant memory range consumed by RETURN, CREATE or CREATE2."""
+    origin: int
+    memory_start: int
+    memory_end: int
+    pc: int
+    is_returned: bool
+
+
+class ProgramEntryEvidence(NamedTuple):
+    """Path-local mapping of a sink's first memory byte to a CODECOPY source."""
+    origin: int
+    start: int
+    end: int
+    sink_pc: int
+    copy_pc: int
+    is_returned: bool
 
 
 class ReturnEvidence(NamedTuple):
@@ -95,7 +133,7 @@ class ReturnEvidence(NamedTuple):
 
 
 class CreatedEvidence(NamedTuple):
-    """Record input bytes copied to memory and passed unchanged to CREATE/CREATE2."""
+    """Record an unchanged copied prefix passed to CREATE/CREATE2 as init code."""
     origin: int
     start: int
     end: int
@@ -111,29 +149,92 @@ class ProgramRange(NamedTuple):
 
 
 class ProgramCandidate(NamedTuple):
-    """A copied input range to examine as a program; is_returned marks RETURN evidence."""
+    """A copied input range to examine as a program and its entry-point evidence."""
     parent: int
     start: int
     end: int
     is_returned: bool
+    trusted: bool
+    copy_reference: bool = False
+
+
+class AbiByteCandidate(NamedTuple):
+    """A canonical top-level ABI bytes value found within a copied data range."""
+    parent: int
+    container_start: int
+    container_end: int
+    offset_word: int
+    length_word: int
+    start: int
+    end: int
+    constructor_argument: bool
+    copy_pc: int
+
+
+def _abi_byte_candidates(code, start=0, end=None):
+    """Yield canonical top-level ABI ``bytes`` payloads in code[start:end].
+
+    ABI is not self-describing. This deliberately recognizes only aligned
+    head pointers to dynamic byte strings; unknown static head words are left
+    uninterpreted. Bounds and zero padding must be canonical. The smallest
+    valid pointer is treated as the tuple-head size, preventing words in the
+    dynamic tail from being reinterpreted as additional head entries.
+    """
+    end = len(code) if end is None else end
+    if not (0 <= start <= end <= len(code)) or end - start < 64:
+        return []
+    size = end - start
+    possible = []
+    for index in range(min(size // 32, MAX_ABI_HEAD_WORDS)):
+        word = start + 32 * index
+        offset = int.from_bytes(code[word:word+32], 'big')
+        if (offset % 32 or offset < 32 * (index + 1)
+                or offset + 32 > size):
+            continue
+        length_word = start + offset
+        length = int.from_bytes(code[length_word:length_word+32], 'big')
+        payload_start = length_word + 32
+        payload_end = payload_start + length
+        padded_end = payload_start + ((length + 31) // 32) * 32
+        if (not length or payload_end > end or padded_end > end
+                or any(code[payload_end:padded_end])):
+            continue
+        possible.append((offset, word, length_word, payload_start, payload_end))
+    if not possible:
+        return []
+    head_size = min(item[0] for item in possible)
+    result, payloads = [], set()
+    for offset, word, length_word, payload_start, payload_end in possible:
+        if word >= start + head_size or offset < head_size:
+            continue
+        payload = payload_start, payload_end
+        if payload in payloads:
+            continue
+        payloads.add(payload)
+        result.append((word, length_word, payload_start, payload_end))
+        if len(result) >= MAX_ABI_CANDIDATES:
+            break
+    return result
 
 
 def _invalidate_memory(memory, start, length):
-    """Remove overwritten memory ranges from the copy records, preserving unaffected bytes."""
+    """Remove overwritten memory records, preserving unaffected copied bytes."""
     if length == 0:
         return memory
     if start is None or length is None:
         return ()
     end = start + length
     kept = []
-    for copied in memory:
-        if end <= copied.start or copied.end <= start:
-            kept.append(copied)
+    for record in memory:
+        if end <= record.start or record.end <= start:
+            kept.append(record)
             continue
-        if copied.start < start:
-            kept.append(copied._replace(end=start))
-        if end < copied.end:
-            kept.append(copied._replace(start=end, source=copied.source + end - copied.start))
+        if isinstance(record, MemoryWord):
+            continue  # A partial overwrite makes the complete loaded word unknown.
+        if record.start < start:
+            kept.append(record._replace(end=start))
+        if end < record.end:
+            kept.append(record._replace(start=end, source=record.source + end - record.start))
     return tuple(kept)
 
 
@@ -150,6 +251,10 @@ class Exploration:
     candidate_entries: set = field(default_factory=set)
     copied_ranges: set[CopiedRange] = field(default_factory=set)
     copy_evidence: set[CopyEvidence] = field(default_factory=set)
+    copy_flows: set[CopyFlow] = field(default_factory=set)
+    program_sinks: set[ProgramSink] = field(default_factory=set)
+    program_entries: set[ProgramEntryEvidence] = field(default_factory=set)
+    create_origins: set[int] = field(default_factory=set)
     returned_copies: set[ReturnEvidence] = field(default_factory=set)
     created_copies: set[CreatedEvidence] = field(default_factory=set)
     referenced_entries: set = field(default_factory=set)
@@ -199,7 +304,14 @@ class Analyzer:
         self.metadata = extract_metadata(code)
         self.meta_ranges = intervals((s, s+l) for s, l, _ in self.metadata)
         self.boundaries = {}
-        self.limits = {0: self.code_size}
+        # Known program-image ends, used only for bytecode-image semantics such
+        # as CODESIZE and CODECOPY. They are deliberately not CFG exploration
+        # limits: a copied range can be incomplete, and reachable code is what
+        # determines the extent of a section.
+        self.image_ends = {0: self.code_size}
+        # Kept as an alias for callers that inspected Analyzer internals before
+        # image extent and exploration extent became separate concepts.
+        self.limits = self.image_ends
         self.accepted = {}  # origin -> exact decoded spans
         self.copied_regions: set[ProgramRange] = set()
         self.returned_copies: set[ReturnEvidence] = set()
@@ -209,6 +321,11 @@ class Analyzer:
         self.bad_targets = {}
         self.program_regions = {}  # returned origins, including rejected entries
         self.copy_evidence: set[CopyEvidence] = set()
+        self.copy_flows: set[CopyFlow] = set()
+        self.program_sinks: set[ProgramSink] = set()
+        self.program_entries: set[ProgramEntryEvidence] = set()
+        self.create_origins: set[int] = set()
+        self.abi_programs: dict[int, AbiByteCandidate] = {}
         self.trace = trace
 
     def in_meta(self, pc):
@@ -224,7 +341,10 @@ class Analyzer:
         """Return cached sets of instruction starts and JUMPDEST offsets for a program origin."""
         if origin not in self.boundaries:
             starts, destinations = set(), set()
-            for instruction in disassemble(self.code, start=origin, end=self.limits.get(origin, self.code_size)):
+            # Candidate copy lengths are evidence about an embedded image, not
+            # proof that executable control flow ends there. Decode through the
+            # containing input so jumps can establish the actual coverage.
+            for instruction in disassemble(self.code, start=origin, end=self.code_size):
                 starts.add(instruction.pc)
                 if instruction.name == 'JUMPDEST':
                     destinations.add(instruction.pc)
@@ -241,7 +361,8 @@ class Analyzer:
         states at one offset, retaining constants shared by those alternatives.
         """
         result = Exploration()
-        limit = self.limits.get(origin, self.code_size)
+        exploration_end = self.code_size
+        image_end = self.image_ends.get(origin, self.code_size)
         _, destinations = self.decoding(origin)
         work = deque([(start, (), ())])
         states = {}
@@ -251,7 +372,7 @@ class Analyzer:
         literal_pushes = None
         while work:
             pc, stack, memory = work.popleft()
-            if pc >= limit:
+            if pc >= exploration_end:
                 result.terminated = True
                 continue
             if pc < origin or self.in_meta(pc):
@@ -284,7 +405,7 @@ class Analyzer:
                 result.invalid_opcode_pcs.add(pc)
                 result.spans.add((pc, pc+1))
                 continue
-            if end > limit:
+            if end > exploration_end:
                 result.truncated_push_pcs.add(pc)
                 continue
             if any(pc < b and a < end for a, b in self.meta_ranges):
@@ -299,7 +420,7 @@ class Analyzer:
                     value = _TracedConstant(value, [pc])
                 stack.append(value)
                 target = origin + value
-                next_info = BY_VALUE[self.code[end]] if end < limit else None
+                next_info = BY_VALUE[self.code[end]] if end < exploration_end else None
                 if target in destinations:
                     result.referenced_entries.add(target)
                     if not (next_info and next_info.name in {'JUMP', 'JUMPI'}):
@@ -357,14 +478,19 @@ class Analyzer:
                     memory = _invalidate_memory(memory, destination, length)
                     if source is not None and length is not None and length > 0:
                         a = origin + source
-                        if origin <= a < limit:
-                            result.copied_ranges.add(CopiedRange(a, min(length, limit-a)))
-                            result.copy_evidence.add(CopyEvidence(origin, a, min(a+length, limit), pc))
+                        if origin <= a < image_end:
+                            result.copied_ranges.add(CopiedRange(a, min(length, image_end-a)))
+                            result.copy_evidence.add(CopyEvidence(origin, a, min(a+length, image_end), pc))
                             if destination is not None:
-                                copied = MemoryCopy(destination, destination+min(length, limit-a), a, pc)
+                                copied = MemoryCopy(destination, destination+min(length, image_end-a), a, pc)
                                 memory = tuple(sorted((*memory, copied)))
+                                result.copy_flows.add(CopyFlow(
+                                    origin, copied.start, copied.end,
+                                    copied.source, copied.source + copied.end - copied.start, pc))
                 elif name in {'MSTORE', 'MSTORE8'}:
                     memory = _invalidate_memory(memory, args[0], 32 if name == 'MSTORE' else 1)
+                    if name == 'MSTORE' and args[0] is not None and args[1] is not None:
+                        memory = tuple(sorted((*memory, MemoryWord(args[0], args[0]+32, args[1]))))
                 elif name in {'CALLDATACOPY', 'RETURNDATACOPY', 'MCOPY'}:
                     memory = _invalidate_memory(memory, args[0], args[2])
                 elif name == 'EXTCODECOPY':
@@ -376,23 +502,54 @@ class Analyzer:
                 elif name == 'RETURN':
                     offset, length = args
                     if offset is not None and length is not None and length > 0:
+                        result.program_sinks.add(ProgramSink(
+                            origin, offset, offset+length, pc, True))
                         for copied in memory:
-                            if copied.start <= offset and offset+length <= copied.end:
+                            if (isinstance(copied, MemoryCopy)
+                                    and copied.start <= offset < copied.end):
+                                first = copied.source + offset - copied.start
+                                source_end = next((record.end for record in result.copy_evidence
+                                                   if record.copy_pc == copied.copy_pc),
+                                                  copied.source + copied.end - copied.start)
+                                result.program_entries.add(ProgramEntryEvidence(
+                                    origin, first, min(first+length, source_end),
+                                    pc, copied.copy_pc, True))
+                            if (isinstance(copied, MemoryCopy)
+                                    and copied.start <= offset and offset+length <= copied.end):
                                 first = copied.source + offset - copied.start
                                 result.returned_copies.add(ReturnEvidence(
                                     origin, first, first+length, pc, copied.copy_pc))
                 elif name in {'CREATE', 'CREATE2'}:
+                    result.create_origins.add(origin)
                     offset, length = args[1], args[2]
                     if offset is not None and length is not None and length > 0:
+                        result.program_sinks.add(ProgramSink(
+                            origin, offset, offset+length, pc, False))
                         for copied in memory:
-                            if copied.start <= offset and offset+length <= copied.end:
+                            # Solidity commonly appends constructor arguments in
+                            # memory after CODECOPYing the init code.  The copied
+                            # prefix is still a program even though the complete
+                            # CREATE payload is not one unchanged source range.
+                            if isinstance(copied, MemoryCopy) and copied.start <= offset < copied.end:
                                 first = copied.source + offset - copied.start
+                                source_end = next((record.end for record in result.copy_evidence
+                                                   if record.copy_pc == copied.copy_pc),
+                                                  copied.source + copied.end - copied.start)
+                                result.program_entries.add(ProgramEntryEvidence(
+                                    origin, first, min(first+length, source_end),
+                                    pc, copied.copy_pc, False))
+                                copied_length = min(copied.end, offset+length) - offset
                                 result.created_copies.add(CreatedEvidence(
-                                    origin, first, first+length, pc, copied.copy_pc))
+                                    origin, first, first+copied_length, pc, copied.copy_pc))
                 if len(memory) > 32:
                     memory = ()  # Discard copy records when their count exceeds the memory-tracking limit.
                 if name == 'PC': stack.append(_TracedConstant(pc-origin, [pc]) if self.trace else pc-origin)
-                elif name == 'CODESIZE': stack.append(_TracedConstant(limit-origin, [pc]) if self.trace else limit-origin)
+                elif name == 'CODESIZE': stack.append(_TracedConstant(image_end-origin, [pc]) if self.trace else image_end-origin)
+                elif name == 'MLOAD':
+                    address = args[0]
+                    word = next((record for record in memory
+                                 if isinstance(record, MemoryWord) and record.start == address), None)
+                    stack.append(word.value if word else None)
                 elif info.pushes:
                     value = _constant(name, args) if info.pushes == 1 else None
                     if self.trace and value is not None:
@@ -415,6 +572,10 @@ class Analyzer:
         self.returned_copies.update(result.returned_copies)
         self.created_copies.update(result.created_copies)
         self.copy_evidence.update(result.copy_evidence)
+        self.copy_flows.update(result.copy_flows)
+        self.program_sinks.update(result.program_sinks)
+        self.program_entries.update(result.program_entries)
+        self.create_origins.update(result.create_origins)
         for copied in result.copied_ranges:
             self.copied_regions.add(ProgramRange(origin, copied.start, copied.start + copied.length))
 
@@ -461,7 +622,8 @@ class Analyzer:
                     changed |= self.region(origin, start)
         return changed
 
-    def region(self, origin, start, trusted=False, returned=False, block=False):
+    def region(self, origin, start, trusted=False, returned=False, block=False,
+               copy_reference=False, abi_reference=None):
         """Classify code starting at start, then examine additional entry points it references.
 
         trusted accepts the initial region directly. returned supplies contextual
@@ -475,23 +637,42 @@ class Analyzer:
         # A constant CODECOPY is positive data evidence for its owning program.
         # Reinterpretation under a new origin requires an explicit RETURN,
         # CREATE or CREATE2 program relation.
-        if not trusted and not returned and self.in_copied_data(origin, start):
+        weak_reference = copy_reference or abi_reference is not None
+        if (not trusted and not returned and not weak_reference
+                and self.in_copied_data(origin, start)):
             return False
         covered = intervals(accepted)
         result = self.explore(origin, start, follow_jumps=not block,
                               accepted_intervals=covered)
         bounded = self.bounded_fragment(origin, start, result, covered)
         touching = self.touching_fragment(origin, start, result, covered)
-        referenced = start in self.references.get(origin, set())
+        referenced = weak_reference or start in self.references.get(origin, set())
         is_accepted = bool(result.spans) and (trusted or result.plausible(
             referenced, returned=returned, bounded=bounded, touching=touching,
             known_bad=self.bad_targets.get(origin, ())))
+        # A constant CODECOPY source is analogous to a pushed value that happens
+        # to name a JUMPDEST: it is worth examining, but the reference alone must
+        # not turn arbitrary copied data into code.  Require independent control-
+        # flow evidence or discovery of a nested returned/created program.
+        if weak_reference and is_accepted and not trusted:
+            is_accepted = bool(result.valid_jump_pcs or result.returned_copies
+                               or result.created_copies or result.program_entries)
         # G counts valid jumps; B lists invalid targets; I lists undefined opcodes.
         self.diagnostics.append({
             'origin': origin, 'start': start, 'accepted': is_accepted,
             'recovery': 'basic_block' if block else None,
             'G': result.valid_jump_count, 'bounded_fragment': bounded,
             'touching_fragment': touching,
+            'copy_reference': copy_reference,
+            'abi_reference': (None if abi_reference is None else {
+                'container_start': abi_reference.container_start,
+                'container_end': abi_reference.container_end,
+                'offset_word': abi_reference.offset_word,
+                'length_word': abi_reference.length_word,
+                'payload_end': abi_reference.end,
+                'constructor_argument': abi_reference.constructor_argument,
+                'copy': abi_reference.copy_pc,
+            }),
             'returned_entry': returned, 'terminators': sorted(result.terminators),
             'referenced': referenced, 'unresolved_jump': result.unresolved_jump,
             'B': sorted(result.invalid_jump_targets),
@@ -502,7 +683,7 @@ class Analyzer:
             'truncated': sorted(result.truncated_push_pcs),
         })
         if not is_accepted:
-            if not block and origin in self.program_regions:
+            if not block and not weak_reference and origin in self.program_regions:
                 return self.region(origin, start, returned=returned, block=True)
             return False
         self.commit(origin, result)
@@ -541,15 +722,88 @@ class Analyzer:
         if cursor < self.code_size: yield cursor, self.code_size
 
     def _discover_copied_programs(self, attempted):
-        """Examine explicitly returned or created bytes as programs; report code growth.
+        """Examine copied bytes as strong or weak program candidates; report code growth.
 
-        Plain CODECOPY establishes data, not a program origin. CODECOPY bytes
-        passed unchanged to RETURN, CREATE or CREATE2 establish one explicitly.
+        CODECOPY bytes passed to RETURN, or forming a prefix of CREATE/CREATE2
+        input, establish a trusted origin. Other constant sources are weak
+        references and require independent structural evidence.
         """
-        candidates = {ProgramCandidate(record.origin, record.start, record.end, True)
+        candidates = {ProgramCandidate(record.origin, record.start, record.end, True, True)
                       for record in self.returned_copies}
-        candidates.update(ProgramCandidate(record.origin, record.start, record.end, False)
+        candidates.update(ProgramCandidate(record.origin, record.start, record.end, False, True)
                           for record in self.created_copies)
+        candidates.update(ProgramCandidate(record.origin, record.start, record.end,
+                                           record.is_returned, True)
+                          for record in self.program_entries)
+        # Exact MemoryCopy records are deliberately invalidated by writes, and
+        # may also be lost when control-flow states are widened.  Program
+        # discovery needs less: a constant CODECOPY range that overlaps memory
+        # later consumed by RETURN/CREATE is useful as a candidate origin even
+        # when the copied bytes were patched.  Keep exact returned/created
+        # evidence separate, since consumers such as runtime() rely on it.
+        for copied in self.copy_flows:
+            surviving = [(copied.memory_start, copied.memory_end)]
+            # A later CODECOPY replaces provenance from an earlier CODECOPY;
+            # unlike MSTORE patches, the displaced bytes no longer contribute
+            # to the eventual program at all.
+            shadows = intervals((other.memory_start, other.memory_end)
+                                for other in self.copy_flows
+                                if other.origin == copied.origin
+                                and other.copy_pc > copied.copy_pc)
+            for shadow_start, shadow_end in shadows:
+                surviving = [(a, b) for start, end in surviving
+                             for a, b in ((start, min(end, shadow_start)),
+                                          (max(start, shadow_end), end))
+                             if a < b]
+            for sink in self.program_sinks:
+                if copied.origin != sink.origin:
+                    continue
+                for memory_start, memory_end in surviving:
+                    overlap_start = max(memory_start, sink.memory_start)
+                    overlap_end = min(memory_end, sink.memory_end)
+                    if overlap_start >= overlap_end:
+                        continue
+                    source_start = copied.source_start + overlap_start - copied.memory_start
+                    source_end = copied.source_start + overlap_end - copied.memory_start
+                    candidates.add(ProgramCandidate(
+                        copied.origin, source_start, source_end, sink.is_returned,
+                        False))
+            # Across internal helper routines, stack widening may hide the
+            # CREATE offset/length before the sink is reached.  A CREATE in the
+            # same analyzed program is still strong enough evidence to try all
+            # of its constant CODECOPY sources.  Implausible entries fail code
+            # analysis; contained successes are subsumed after discovery.
+            if copied.origin in self.create_origins:
+                candidates.add(ProgramCandidate(
+                    copied.origin, copied.source_start, copied.source_end, False, False))
+        # The destination is often a free-memory pointer returned by a helper
+        # and therefore unknown in that helper's isolated stack state.  Source
+        # and length are still constant, so CREATE fallback discovery can use
+        # the destination-independent copy evidence as well.
+        candidates.update(ProgramCandidate(record.origin, record.start, record.end, False, False)
+                          for record in self.copy_evidence
+                          if record.origin in self.create_origins)
+        # A constant CODECOPY source is weak program-entry evidence even without
+        # a locally visible RETURN/CREATE sink.  This covers creation-code
+        # accessors such as abi.encodePacked(type(C).creationCode, arguments).
+        candidates.update(ProgramCandidate(record.origin, record.start, record.end,
+                                           False, False, True)
+                          for record in self.copy_evidence)
+        # Several paths or partially overwritten fragments may identify the
+        # same source entry with different extents.  Analyze the widest known
+        # range first so a short seed cannot permanently narrow that program.
+        widest = {}
+        for candidate in candidates:
+            key = candidate.parent, candidate.start
+            previous = widest.get(key)
+            widest[key] = ProgramCandidate(
+                candidate.parent, candidate.start,
+                max(candidate.end, previous.end if previous else candidate.end),
+                candidate.is_returned or bool(previous and previous.is_returned),
+                candidate.trusted or bool(previous and previous.trusted),
+                candidate.copy_reference and bool(
+                    previous.copy_reference if previous else True))
+        candidates = set(widest.values())
         changed = False
         # Returned subranges define a more precise extent than enclosing copies.
         for candidate in sorted(candidates - attempted, key=lambda item: (
@@ -558,14 +812,32 @@ class Analyzer:
             start = candidate.start
             if any(a < start < b for spans in self.accepted.values() for a, b in spans):
                 continue  # Keep the operand bytes within their existing instruction.
-            if start not in self.limits:
-                self.limits[start] = candidate.end
+            # A trusted RETURN/CREATE relation establishes an image extent for
+            # CODESIZE/CODECOPY semantics. A speculative CODECOPY range does
+            # not. In either case CFG exploration is unbounded by this value.
+            if candidate.trusted and candidate.end > self.image_ends.get(start, start):
+                self.image_ends[start] = candidate.end
                 self.boundaries.pop(start, None)
-            self.program_regions[start] = self.limits[start]
+            self.program_regions[start] = max(
+                candidate.end, self.program_regions.get(start, candidate.end))
             # Both returned runtime and CREATE input are explicit program
             # relations.  `returned` here supplies that contextual evidence to
             # plausibility; output returned records remain separate.
-            changed |= self.region(start, start, returned=True)
+            # A copy supplying the first byte consumed by RETURN/CREATE
+            # establishes the program entry as strongly as input offset zero.
+            # Overlapping copies and destination-independent CREATE fallbacks
+            # remain speculative and need ordinary control-flow evidence.
+            accepted = self.region(start, start, trusted=candidate.trusted,
+                                   copy_reference=candidate.copy_reference)
+            changed |= accepted
+            if candidate.copy_reference and start not in self.accepted:
+                # A rejected weak reference must not establish an enclosing
+                # program origin from which gap discovery can recover the same
+                # bytes under less restrictive fragment rules.
+                self.program_regions.pop(start, None)
+                if not candidate.trusted:
+                    self.image_ends.pop(start, None)
+                self.boundaries.pop(start, None)
         return changed
 
     def _candidate_origins(self, start, gap_end, origins):
@@ -585,6 +857,54 @@ class Analyzer:
                        and record.origin not in candidates
                        and any(a == record.end for a, b in self.accepted.get(record.origin, ()))]
         return candidates
+
+    def _discover_abi_programs(self, attempted):
+        """Try canonical ABI bytes values inside copied, otherwise unclaimed data.
+
+        A copied constructor-argument block supplies the container but not the
+        entry of a dynamic byte string. ABI structure supplies a weak entry and
+        an exact image extent; ordinary CFG and nested-program evidence still
+        decide whether the payload is code.
+        """
+        covered = intervals(span for spans in self.accepted.values() for span in spans)
+        candidates = set()
+        for copied in self.copy_evidence:
+            if any(a < copied.end and copied.start < b for a, b in covered):
+                continue
+            returned_end = max((record.end for record in self.returned_copies
+                                if record.origin == copied.origin), default=None)
+            for offset_word, length_word, start, end in _abi_byte_candidates(
+                    self.code, copied.start, copied.end):
+                candidates.add(AbiByteCandidate(
+                    copied.origin, copied.start, copied.end, offset_word,
+                    length_word, start, end,
+                    returned_end is not None and copied.start >= returned_end,
+                    copied.copy_pc))
+
+        changed = False
+        for candidate in sorted(candidates - attempted,
+                                key=lambda item: (item.start, item.end, item.parent)):
+            attempted.add(candidate)
+            start = candidate.start
+            if self.in_meta(start) or any(a < start < b for a, b in covered):
+                continue
+            previous_end = self.image_ends.get(start)
+            self.image_ends[start] = candidate.end
+            self.boundaries.pop(start, None)
+            self.program_regions[start] = max(
+                candidate.end, self.program_regions.get(start, candidate.end))
+            accepted = self.region(start, start, abi_reference=candidate)
+            changed |= accepted
+            if accepted:
+                self.abi_programs[start] = candidate
+            else:
+                self.program_regions.pop(start, None)
+                if previous_end is None:
+                    self.image_ends.pop(start, None)
+                else:
+                    self.image_ends[start] = previous_end
+                self.boundaries.pop(start, None)
+        return changed
 
     def _discover_gap_fragments(self, attempted):
         """Search unclassified ranges and their JUMPDESTs for additional code regions."""
@@ -612,7 +932,7 @@ class Analyzer:
                     if origin in data_owners:
                         continue
                     key = (origin, start)
-                    if key in attempted or origin > start or start >= self.limits.get(origin, self.code_size):
+                    if key in attempted or origin > start or start >= self.code_size:
                         continue
                     attempted.add(key)
                     if start not in self.decoding(origin)[0]:
@@ -627,14 +947,27 @@ class Analyzer:
         if self.code_size:
             self.region(0, 0, trusted=True)
         tried_programs = set()
+        tried_abi = set()
         tried_fragments = set()
         while True:
             if self._discover_copied_programs(tried_programs):
                 continue  # Examine newly found copies before searching the remaining gaps.
+            if self._discover_abi_programs(tried_abi):
+                continue  # Follow init/runtime relations inside decoded byte strings first.
             changed = self._discover_gap_fragments(tried_fragments)
             changed |= self.promote_bounded_fragments()
             if not changed:
                 break
+        # Aggressive seeds can decode a small suffix before the enclosing code
+        # region is discovered.  Once coverage stabilizes, such candidates add
+        # no code coverage and should not survive as redundant programs.
+        for origin in list(self.accepted):
+            own = intervals(self.accepted[origin])
+            other = intervals(span for candidate, spans in self.accepted.items()
+                              if candidate != origin for span in spans)
+            if own and all(any(a <= start and end <= b for a, b in other)
+                           for start, end in own):
+                del self.accepted[origin]
 
     def _data_sections(self, origin, protected):
         """Yield data sections, marking copied bytes after a returned program as possible arguments."""
@@ -762,17 +1095,20 @@ def analyze_sections(code: bytes, *, trace: bool = False) -> SectionAnalysis:
     sections = analyzer.run()
     programs = []
     for origin in sorted(set(analyzer.accepted) | set(analyzer.program_regions)):
-        end = analyzer.limits.get(origin, len(code))
+        end = analyzer.image_ends.get(origin, analyzer.program_regions.get(origin, len(code)))
         returned = sorted(ProgramRange(record.origin, record.start, record.end)
                           for record in analyzer.returned_copies if record.start == origin)
         created = sorted(ProgramRange(record.origin, record.start, record.end)
                          for record in analyzer.created_copies if record.start == origin)
         evidence = ('entry' if origin == 0 else 'returned_copy' if returned
-                    else 'created_copy' if created else 'fragment')
+                    else 'created_copy' if created else 'abi_bytes'
+                    if origin in analyzer.abi_programs else 'fragment')
         parents = returned or created
+        abi_parent = analyzer.abi_programs.get(origin)
         decisions = [d for d in analyzer.diagnostics if d['origin'] == origin and d['start'] == origin]
         programs.append(Program(origin, code[origin:end], (Fragment(origin, end, 0),),
-                                evidence, parents[0].parent if parents else None,
+                                evidence, (parents[0].parent if parents else
+                                           abi_parent.parent if abi_parent else None),
                                 any(d['accepted'] for d in decisions),
                                 tuple(intervals(analyzer.accepted.get(origin, ())))))
     return SectionAnalysis(sections, programs, analyzer.diagnostics)
